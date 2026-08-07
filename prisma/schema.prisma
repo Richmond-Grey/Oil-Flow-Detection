@@ -1,0 +1,128 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  FIELD_ENGINEER
+}
+
+enum SegmentStatus {
+  NORMAL
+  WARNING
+  LEAK
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum AlertChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum AlertStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  refreshTokenHash String?
+  name             String
+  role             UserRole @default(OPERATOR)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Pipeline {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  segments    Segment[]
+}
+
+model Segment {
+  id            String        @id @default(cuid())
+  pipelineId    String
+  pipeline      Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  startSensorId String?
+  startSensor   Sensor?       @relation("StartSensor", fields: [startSensorId], references: [id], onDelete: SetNull)
+  endSensorId   String?
+  endSensor     Sensor?       @relation("EndSensor", fields: [endSensorId], references: [id], onDelete: SetNull)
+  status        SegmentStatus @default(NORMAL)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  sensors       Sensor[]      @relation("SegmentSensors")
+  incidents     LeakIncident[]
+}
+
+model Sensor {
+  id               String          @id @default(cuid())
+  segmentId        String?
+  segment          Segment?        @relation("SegmentSensors", fields: [segmentId], references: [id], onDelete: SetNull)
+  serialNumber     String          @unique
+  latitude         Float
+  longitude        Float
+  installedAt      DateTime        @default(now())
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  startForSegments Segment[]       @relation("StartSensor")
+  endForSegments   Segment[]       @relation("EndSensor")
+  readings         SensorReading[]
+}
+
+model SensorReading {
+  id          String   @id @default(cuid())
+  sensorId    String
+  sensor      Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+  pressure    Float
+  flowRate    Float?
+  temperature Float?
+  recordedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([sensorId, recordedAt])
+}
+
+model LeakIncident {
+  id          String         @id @default(cuid())
+  segmentId   String
+  segment     Segment        @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  confidence  Float
+  status      IncidentStatus @default(OPEN)
+  detectedAt  DateTime       @default(now())
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  alerts      AlertLog[]
+}
+
+model AlertLog {
+  id         String       @id @default(cuid())
+  incidentId String
+  incident   LeakIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  channel    AlertChannel
+  recipient  String
+  status     AlertStatus  @default(PENDING)
+  sentAt     DateTime?
+  createdAt  DateTime     @default(now())
+}
