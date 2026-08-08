@@ -8,11 +8,11 @@
  *
  * 🟢 You can import this file directly.
  */
-export type * from './models/User.ts'
-export type * from './models/Pipeline.ts'
-export type * from './models/Segment.ts'
-export type * from './models/Sensor.ts'
-export type * from './models/SensorReading.ts'
-export type * from './models/LeakIncident.ts'
-export type * from './models/AlertLog.ts'
-export type * from './commonInputTypes.ts'
+export type * from './models/User.js'
+export type * from './models/Pipeline.js'
+export type * from './models/Segment.js'
+export type * from './models/Sensor.js'
+export type * from './models/SensorReading.js'
+export type * from './models/LeakIncident.js'
+export type * from './models/AlertLog.js'
+export type * from './commonInputTypes.js'
