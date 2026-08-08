@@ -17,6 +17,10 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
+import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { DetectionModule } from './modules/detection/detection.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -24,6 +28,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
       load: [configuration],
       validate: validateEnv,
     }),
+    ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -33,6 +39,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     ReadingsModule,
     IncidentsModule,
     HealthModule,
+    DetectionModule,
   ],
   providers: [
     {

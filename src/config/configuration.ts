@@ -9,4 +9,11 @@ export default () => ({
     refreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
   },
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  detection: {
+    intervalMs: parseInt(process.env.DETECTION_INTERVAL_MS || '10000', 10),
+    sampleSize: parseInt(process.env.DETECTION_SAMPLE_SIZE || '5', 10),
+    pressureDropThresholdPercent: parseFloat(process.env.DETECTION_PRESSURE_DROP_THRESHOLD_PCT || '15'),
+    flowMismatchTolerancePercent: parseFloat(process.env.DETECTION_FLOW_MISMATCH_TOLERANCE_PCT || '10'),
+    minSustainedTicks: parseInt(process.env.DETECTION_MIN_SUSTAINED_TICKS || '3', 10),
+  },
 });

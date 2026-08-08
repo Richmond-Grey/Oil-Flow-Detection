@@ -9,6 +9,11 @@ export const envSchema = z.object({
   JWT_ACCESS_EXPIRY: z.string().default('15m'),
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('*'),
+  DETECTION_INTERVAL_MS: z.coerce.number().default(10000),
+  DETECTION_SAMPLE_SIZE: z.coerce.number().default(5),
+  DETECTION_PRESSURE_DROP_THRESHOLD_PCT: z.coerce.number().default(15),
+  DETECTION_FLOW_MISMATCH_TOLERANCE_PCT: z.coerce.number().default(10),
+  DETECTION_MIN_SUSTAINED_TICKS: z.coerce.number().default(3),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
