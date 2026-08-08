@@ -193,8 +193,40 @@ export class DetectionService implements OnModuleInit {
       const targetSegmentStatus = bothSignalsAgree ? SegmentStatus.LEAK : SegmentStatus.WARNING;
 
       if (existingOpenIncident) {
+        // Sub-case A: Check if existing incident can be upgraded from low-confidence (0.65) to high-confidence (0.95)
+        if (bothSignalsAgree && existingOpenIncident.confidence < 0.9) {
+          const updatedIncident = await this.prisma.leakIncident.update({
+            where: { id: existingOpenIncident.id },
+            data: { confidence: 0.95 },
+          });
+
+          await this.prisma.segment.update({
+            where: { id: segment.id },
+            data: { status: SegmentStatus.LEAK },
+          });
+
+          this.logger.warn(
+            `⚡ [INCIDENT UPGRADED] Upgraded Incident ${updatedIncident.id} for Segment ${segment.id} from low confidence to high confidence (0.95). Segment status updated to LEAK.`,
+          );
+
+          // Emit upgrade event for downstream listeners
+          const payload: IncidentCreatedEvent = {
+            incidentId: updatedIncident.id,
+            segmentId: segment.id,
+            pipelineId: segment.pipelineId,
+            confidence: 0.95,
+            status: updatedIncident.status,
+            detectedAt: updatedIncident.detectedAt,
+            pressureDropPct,
+            flowMismatchPct,
+          };
+          this.eventEmitter.emit('incident.upgraded', payload);
+          return;
+        }
+
+        // Sub-case B: Already high-confidence or remaining at low-confidence -> skip as duplicate
         this.logger.log(
-          `[DUPLICATE SKIPPED] Segment ${segment.id} already has an OPEN incident (${existingOpenIncident.id}). Status remains: ${segment.status}`,
+          `[DUPLICATE SKIPPED] Segment ${segment.id} already has an OPEN incident (${existingOpenIncident.id}) with confidence ${existingOpenIncident.confidence}. Status remains: ${segment.status}`,
         );
         return;
       }

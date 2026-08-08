@@ -34,13 +34,14 @@ A single unusual sensor reading could be caused by electrical noise, temporary v
 
 ## 3. Confidence Scores & Decision Outcomes
 
-When evaluating a segment, the engine decides between 4 outcomes:
+When evaluating a segment, the engine decides between 5 outcomes:
 
 | Outcome | Signal Conditions | Segment Status | Confidence | Action Taken |
 | :--- | :--- | :--- | :--- | :--- |
 | **High-Confidence Leak** | Both Pressure Drop ($\ge 15\%$) **AND** Flow Mismatch ($\ge 10\%$) agree for $\ge 3$ ticks | `LEAK` | **0.95 (95%)** | Opens `LeakIncident` with `status: OPEN`. Emits `incident.created` event. |
 | **Low-Confidence Warning** | Pressure drop persists for an extended duration ($\ge 5$ ticks), but flow rate is unconfirmed | `WARNING` | **0.65 (65%)** | Opens `LeakIncident` with `status: OPEN`. Emits `incident.created` event. |
-| **Duplicate Skipped** | Anomaly detected, but the segment already has an active `OPEN` incident | Unchanged | N/A | Logged as duplicate; no new record created. |
+| **Incident Upgraded** | Existing `OPEN` incident was low-confidence (`0.65`), but flow mismatch signal now agrees | `LEAK` | Upgraded to **0.95** | Updates existing incident confidence to `0.95` and segment status to `LEAK`. Emits `incident.upgraded` event. |
+| **Duplicate Skipped** | Anomaly detected, but segment already has an `OPEN` incident matching the current confidence tier | Unchanged | Unchanged | Logged as duplicate; no new record created. |
 | **Auto-Resolved** | An active `OPEN` incident exists, but recent readings show pressure and flow have recovered to normal | `NORMAL` | N/A | Updates incident `status: RESOLVED` with `resolvedAt` timestamp. |
 
 ---
