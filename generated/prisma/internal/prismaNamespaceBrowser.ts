@@ -162,6 +162,8 @@ export const AlertLogScalarFieldEnum = {
   channel: 'channel',
   recipient: 'recipient',
   status: 'status',
+  errorMessage: 'errorMessage',
+  retryCount: 'retryCount',
   sentAt: 'sentAt',
   createdAt: 'createdAt'
 } as const

@@ -301,7 +301,7 @@ export class DetectionService implements OnModuleInit {
       const flowNormal = flowMismatchPct < flowMismatchTolerancePct / 2;
 
       if (pressureNormal && flowNormal) {
-        await this.prisma.leakIncident.update({
+        const resolvedIncident = await this.prisma.leakIncident.update({
           where: { id: existingOpenIncident.id },
           data: {
             status: IncidentStatus.RESOLVED,
@@ -317,6 +317,19 @@ export class DetectionService implements OnModuleInit {
         this.logger.log(
           `✅ [INCIDENT RESOLVED] Incident ${existingOpenIncident.id} on Segment ${segment.id} resolved. Segment status flipped back to NORMAL.`,
         );
+
+        const payload: IncidentCreatedEvent = {
+          incidentId: resolvedIncident.id,
+          segmentId: segment.id,
+          pipelineId: segment.pipelineId,
+          confidence: Number(resolvedIncident.confidence),
+          status: resolvedIncident.status,
+          detectedAt: resolvedIncident.detectedAt,
+          pressureDropPct,
+          flowMismatchPct,
+        };
+        this.eventEmitter.emit('incident.resolved', payload);
+        this.logger.log(`[EVENT EMITTED] 'incident.resolved' event emitted for Incident ${resolvedIncident.id}`);
         return;
       }
     }

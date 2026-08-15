@@ -20,6 +20,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DetectionModule } from './modules/detection/detection.module';
+import { AlertsModule } from './modules/alerts/alerts.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { DetectionModule } from './modules/detection/detection.module';
     IncidentsModule,
     HealthModule,
     DetectionModule,
+    AlertsModule,
   ],
   providers: [
     {

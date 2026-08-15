@@ -122,8 +122,8 @@ model AlertLog {
   channel      AlertChannel
   recipient    String
   status       AlertStatus  @default(PENDING)
-  sentAt       DateTime?
   errorMessage String?
   retryCount   Int          @default(0)
+  sentAt       DateTime?
   createdAt    DateTime     @default(now())
 }

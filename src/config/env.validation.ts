@@ -16,6 +16,9 @@ export const envSchema = z.object({
   DETECTION_MIN_SUSTAINED_TICKS: z.coerce.number().default(3),
   // Optional: set independently to tune the flow-only WARNING tick threshold
   DETECTION_FLOW_MIN_SUSTAINED_TICKS: z.coerce.number().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  ALERT_EMAIL_FROM: z.string().optional(),
+  ALERT_RECIPIENTS: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

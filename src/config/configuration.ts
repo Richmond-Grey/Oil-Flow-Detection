@@ -21,4 +21,11 @@ export default () => ({
       ? parseInt(process.env.DETECTION_FLOW_MIN_SUSTAINED_TICKS, 10)
       : undefined,
   },
+  alerting: {
+    resendApiKey: process.env.RESEND_API_KEY,
+    emailFrom: process.env.ALERT_EMAIL_FROM || 'alerts@pipeline-detection.local',
+    recipients: process.env.ALERT_RECIPIENTS
+      ? process.env.ALERT_RECIPIENTS.split(',').map((e) => e.trim()).filter(Boolean)
+      : [],
+  },
 });

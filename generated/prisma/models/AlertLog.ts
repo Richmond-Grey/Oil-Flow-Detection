@@ -20,8 +20,18 @@ export type AlertLogModel = runtime.Types.Result.DefaultSelection<Prisma.$AlertL
 
 export type AggregateAlertLog = {
   _count: AlertLogCountAggregateOutputType | null
+  _avg: AlertLogAvgAggregateOutputType | null
+  _sum: AlertLogSumAggregateOutputType | null
   _min: AlertLogMinAggregateOutputType | null
   _max: AlertLogMaxAggregateOutputType | null
+}
+
+export type AlertLogAvgAggregateOutputType = {
+  retryCount: number | null
+}
+
+export type AlertLogSumAggregateOutputType = {
+  retryCount: number | null
 }
 
 export type AlertLogMinAggregateOutputType = {
@@ -30,6 +40,8 @@ export type AlertLogMinAggregateOutputType = {
   channel: $Enums.AlertChannel | null
   recipient: string | null
   status: $Enums.AlertStatus | null
+  errorMessage: string | null
+  retryCount: number | null
   sentAt: Date | null
   createdAt: Date | null
 }
@@ -40,6 +52,8 @@ export type AlertLogMaxAggregateOutputType = {
   channel: $Enums.AlertChannel | null
   recipient: string | null
   status: $Enums.AlertStatus | null
+  errorMessage: string | null
+  retryCount: number | null
   sentAt: Date | null
   createdAt: Date | null
 }
@@ -50,11 +64,21 @@ export type AlertLogCountAggregateOutputType = {
   channel: number
   recipient: number
   status: number
+  errorMessage: number
+  retryCount: number
   sentAt: number
   createdAt: number
   _all: number
 }
 
+
+export type AlertLogAvgAggregateInputType = {
+  retryCount?: true
+}
+
+export type AlertLogSumAggregateInputType = {
+  retryCount?: true
+}
 
 export type AlertLogMinAggregateInputType = {
   id?: true
@@ -62,6 +86,8 @@ export type AlertLogMinAggregateInputType = {
   channel?: true
   recipient?: true
   status?: true
+  errorMessage?: true
+  retryCount?: true
   sentAt?: true
   createdAt?: true
 }
@@ -72,6 +98,8 @@ export type AlertLogMaxAggregateInputType = {
   channel?: true
   recipient?: true
   status?: true
+  errorMessage?: true
+  retryCount?: true
   sentAt?: true
   createdAt?: true
 }
@@ -82,6 +110,8 @@ export type AlertLogCountAggregateInputType = {
   channel?: true
   recipient?: true
   status?: true
+  errorMessage?: true
+  retryCount?: true
   sentAt?: true
   createdAt?: true
   _all?: true
@@ -125,6 +155,18 @@ export type AlertLogAggregateArgs<ExtArgs extends runtime.Types.Extensions.Inter
   /**
    * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
    * 
+   * Select which fields to average
+  **/
+  _avg?: AlertLogAvgAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
+   * Select which fields to sum
+  **/
+  _sum?: AlertLogSumAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
    * Select which fields to find the minimum value
   **/
   _min?: AlertLogMinAggregateInputType
@@ -155,6 +197,8 @@ export type AlertLogGroupByArgs<ExtArgs extends runtime.Types.Extensions.Interna
   take?: number
   skip?: number
   _count?: AlertLogCountAggregateInputType | true
+  _avg?: AlertLogAvgAggregateInputType
+  _sum?: AlertLogSumAggregateInputType
   _min?: AlertLogMinAggregateInputType
   _max?: AlertLogMaxAggregateInputType
 }
@@ -165,9 +209,13 @@ export type AlertLogGroupByOutputType = {
   channel: $Enums.AlertChannel
   recipient: string
   status: $Enums.AlertStatus
+  errorMessage: string | null
+  retryCount: number
   sentAt: Date | null
   createdAt: Date
   _count: AlertLogCountAggregateOutputType | null
+  _avg: AlertLogAvgAggregateOutputType | null
+  _sum: AlertLogSumAggregateOutputType | null
   _min: AlertLogMinAggregateOutputType | null
   _max: AlertLogMaxAggregateOutputType | null
 }
@@ -196,6 +244,8 @@ export type AlertLogWhereInput = {
   channel?: Prisma.EnumAlertChannelFilter<"AlertLog"> | $Enums.AlertChannel
   recipient?: Prisma.StringFilter<"AlertLog"> | string
   status?: Prisma.EnumAlertStatusFilter<"AlertLog"> | $Enums.AlertStatus
+  errorMessage?: Prisma.StringNullableFilter<"AlertLog"> | string | null
+  retryCount?: Prisma.IntFilter<"AlertLog"> | number
   sentAt?: Prisma.DateTimeNullableFilter<"AlertLog"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"AlertLog"> | Date | string
   incident?: Prisma.XOR<Prisma.LeakIncidentScalarRelationFilter, Prisma.LeakIncidentWhereInput>
@@ -207,6 +257,8 @@ export type AlertLogOrderByWithRelationInput = {
   channel?: Prisma.SortOrder
   recipient?: Prisma.SortOrder
   status?: Prisma.SortOrder
+  errorMessage?: Prisma.SortOrderInput | Prisma.SortOrder
+  retryCount?: Prisma.SortOrder
   sentAt?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   incident?: Prisma.LeakIncidentOrderByWithRelationInput
@@ -221,6 +273,8 @@ export type AlertLogWhereUniqueInput = Prisma.AtLeast<{
   channel?: Prisma.EnumAlertChannelFilter<"AlertLog"> | $Enums.AlertChannel
   recipient?: Prisma.StringFilter<"AlertLog"> | string
   status?: Prisma.EnumAlertStatusFilter<"AlertLog"> | $Enums.AlertStatus
+  errorMessage?: Prisma.StringNullableFilter<"AlertLog"> | string | null
+  retryCount?: Prisma.IntFilter<"AlertLog"> | number
   sentAt?: Prisma.DateTimeNullableFilter<"AlertLog"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"AlertLog"> | Date | string
   incident?: Prisma.XOR<Prisma.LeakIncidentScalarRelationFilter, Prisma.LeakIncidentWhereInput>
@@ -232,11 +286,15 @@ export type AlertLogOrderByWithAggregationInput = {
   channel?: Prisma.SortOrder
   recipient?: Prisma.SortOrder
   status?: Prisma.SortOrder
+  errorMessage?: Prisma.SortOrderInput | Prisma.SortOrder
+  retryCount?: Prisma.SortOrder
   sentAt?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   _count?: Prisma.AlertLogCountOrderByAggregateInput
+  _avg?: Prisma.AlertLogAvgOrderByAggregateInput
   _max?: Prisma.AlertLogMaxOrderByAggregateInput
   _min?: Prisma.AlertLogMinOrderByAggregateInput
+  _sum?: Prisma.AlertLogSumOrderByAggregateInput
 }
 
 export type AlertLogScalarWhereWithAggregatesInput = {
@@ -248,6 +306,8 @@ export type AlertLogScalarWhereWithAggregatesInput = {
   channel?: Prisma.EnumAlertChannelWithAggregatesFilter<"AlertLog"> | $Enums.AlertChannel
   recipient?: Prisma.StringWithAggregatesFilter<"AlertLog"> | string
   status?: Prisma.EnumAlertStatusWithAggregatesFilter<"AlertLog"> | $Enums.AlertStatus
+  errorMessage?: Prisma.StringNullableWithAggregatesFilter<"AlertLog"> | string | null
+  retryCount?: Prisma.IntWithAggregatesFilter<"AlertLog"> | number
   sentAt?: Prisma.DateTimeNullableWithAggregatesFilter<"AlertLog"> | Date | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"AlertLog"> | Date | string
 }
@@ -257,6 +317,8 @@ export type AlertLogCreateInput = {
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
   incident: Prisma.LeakIncidentCreateNestedOneWithoutAlertsInput
@@ -268,6 +330,8 @@ export type AlertLogUncheckedCreateInput = {
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
 }
@@ -277,6 +341,8 @@ export type AlertLogUpdateInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   incident?: Prisma.LeakIncidentUpdateOneRequiredWithoutAlertsNestedInput
@@ -288,6 +354,8 @@ export type AlertLogUncheckedUpdateInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -298,6 +366,8 @@ export type AlertLogCreateManyInput = {
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
 }
@@ -307,6 +377,8 @@ export type AlertLogUpdateManyMutationInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -317,6 +389,8 @@ export type AlertLogUncheckedUpdateManyInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -337,8 +411,14 @@ export type AlertLogCountOrderByAggregateInput = {
   channel?: Prisma.SortOrder
   recipient?: Prisma.SortOrder
   status?: Prisma.SortOrder
+  errorMessage?: Prisma.SortOrder
+  retryCount?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+}
+
+export type AlertLogAvgOrderByAggregateInput = {
+  retryCount?: Prisma.SortOrder
 }
 
 export type AlertLogMaxOrderByAggregateInput = {
@@ -347,6 +427,8 @@ export type AlertLogMaxOrderByAggregateInput = {
   channel?: Prisma.SortOrder
   recipient?: Prisma.SortOrder
   status?: Prisma.SortOrder
+  errorMessage?: Prisma.SortOrder
+  retryCount?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
@@ -357,8 +439,14 @@ export type AlertLogMinOrderByAggregateInput = {
   channel?: Prisma.SortOrder
   recipient?: Prisma.SortOrder
   status?: Prisma.SortOrder
+  errorMessage?: Prisma.SortOrder
+  retryCount?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+}
+
+export type AlertLogSumOrderByAggregateInput = {
+  retryCount?: Prisma.SortOrder
 }
 
 export type AlertLogCreateNestedManyWithoutIncidentInput = {
@@ -411,11 +499,21 @@ export type EnumAlertStatusFieldUpdateOperationsInput = {
   set?: $Enums.AlertStatus
 }
 
+export type IntFieldUpdateOperationsInput = {
+  set?: number
+  increment?: number
+  decrement?: number
+  multiply?: number
+  divide?: number
+}
+
 export type AlertLogCreateWithoutIncidentInput = {
   id?: string
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
 }
@@ -425,6 +523,8 @@ export type AlertLogUncheckedCreateWithoutIncidentInput = {
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
 }
@@ -464,6 +564,8 @@ export type AlertLogScalarWhereInput = {
   channel?: Prisma.EnumAlertChannelFilter<"AlertLog"> | $Enums.AlertChannel
   recipient?: Prisma.StringFilter<"AlertLog"> | string
   status?: Prisma.EnumAlertStatusFilter<"AlertLog"> | $Enums.AlertStatus
+  errorMessage?: Prisma.StringNullableFilter<"AlertLog"> | string | null
+  retryCount?: Prisma.IntFilter<"AlertLog"> | number
   sentAt?: Prisma.DateTimeNullableFilter<"AlertLog"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"AlertLog"> | Date | string
 }
@@ -473,6 +575,8 @@ export type AlertLogCreateManyIncidentInput = {
   channel: $Enums.AlertChannel
   recipient: string
   status?: $Enums.AlertStatus
+  errorMessage?: string | null
+  retryCount?: number
   sentAt?: Date | string | null
   createdAt?: Date | string
 }
@@ -482,6 +586,8 @@ export type AlertLogUpdateWithoutIncidentInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -491,6 +597,8 @@ export type AlertLogUncheckedUpdateWithoutIncidentInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -500,6 +608,8 @@ export type AlertLogUncheckedUpdateManyWithoutIncidentInput = {
   channel?: Prisma.EnumAlertChannelFieldUpdateOperationsInput | $Enums.AlertChannel
   recipient?: Prisma.StringFieldUpdateOperationsInput | string
   status?: Prisma.EnumAlertStatusFieldUpdateOperationsInput | $Enums.AlertStatus
+  errorMessage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  retryCount?: Prisma.IntFieldUpdateOperationsInput | number
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -512,6 +622,8 @@ export type AlertLogSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs
   channel?: boolean
   recipient?: boolean
   status?: boolean
+  errorMessage?: boolean
+  retryCount?: boolean
   sentAt?: boolean
   createdAt?: boolean
   incident?: boolean | Prisma.LeakIncidentDefaultArgs<ExtArgs>
@@ -523,6 +635,8 @@ export type AlertLogSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exte
   channel?: boolean
   recipient?: boolean
   status?: boolean
+  errorMessage?: boolean
+  retryCount?: boolean
   sentAt?: boolean
   createdAt?: boolean
   incident?: boolean | Prisma.LeakIncidentDefaultArgs<ExtArgs>
@@ -534,6 +648,8 @@ export type AlertLogSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exte
   channel?: boolean
   recipient?: boolean
   status?: boolean
+  errorMessage?: boolean
+  retryCount?: boolean
   sentAt?: boolean
   createdAt?: boolean
   incident?: boolean | Prisma.LeakIncidentDefaultArgs<ExtArgs>
@@ -545,11 +661,13 @@ export type AlertLogSelectScalar = {
   channel?: boolean
   recipient?: boolean
   status?: boolean
+  errorMessage?: boolean
+  retryCount?: boolean
   sentAt?: boolean
   createdAt?: boolean
 }
 
-export type AlertLogOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "incidentId" | "channel" | "recipient" | "status" | "sentAt" | "createdAt", ExtArgs["result"]["alertLog"]>
+export type AlertLogOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "incidentId" | "channel" | "recipient" | "status" | "errorMessage" | "retryCount" | "sentAt" | "createdAt", ExtArgs["result"]["alertLog"]>
 export type AlertLogInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   incident?: boolean | Prisma.LeakIncidentDefaultArgs<ExtArgs>
 }
@@ -571,6 +689,8 @@ export type $AlertLogPayload<ExtArgs extends runtime.Types.Extensions.InternalAr
     channel: $Enums.AlertChannel
     recipient: string
     status: $Enums.AlertStatus
+    errorMessage: string | null
+    retryCount: number
     sentAt: Date | null
     createdAt: Date
   }, ExtArgs["result"]["alertLog"]>
@@ -1002,6 +1122,8 @@ export interface AlertLogFieldRefs {
   readonly channel: Prisma.FieldRef<"AlertLog", 'AlertChannel'>
   readonly recipient: Prisma.FieldRef<"AlertLog", 'String'>
   readonly status: Prisma.FieldRef<"AlertLog", 'AlertStatus'>
+  readonly errorMessage: Prisma.FieldRef<"AlertLog", 'String'>
+  readonly retryCount: Prisma.FieldRef<"AlertLog", 'Int'>
   readonly sentAt: Prisma.FieldRef<"AlertLog", 'DateTime'>
   readonly createdAt: Prisma.FieldRef<"AlertLog", 'DateTime'>
 }
