@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../../generated/prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -14,9 +15,9 @@ export class UsersController {
   @Get()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'List all users (Admin only)' })
-  @ApiResponse({ status: 200, description: 'List of users' })
-  async findAll() {
-    return this.usersService.findAll();
+  @ApiResponse({ status: 200, description: 'Paginated list of users' })
+  async findAll(@Query() query: PaginationQueryDto) {
+    return this.usersService.findAll(query.page, query.limit);
   }
 
   @Get(':id')

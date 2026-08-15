@@ -5,18 +5,32 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class IncidentsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.leakIncident.findMany({
-      include: {
-        segment: {
-          include: {
-            pipeline: true,
+  async findAll(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.leakIncident.findMany({
+        skip,
+        take: limit,
+        include: {
+          segment: {
+            include: {
+              pipeline: true,
+            },
           },
+          alerts: true,
         },
-        alerts: true,
-      },
-      orderBy: { detectedAt: 'desc' },
-    });
+        orderBy: { detectedAt: 'desc' },
+      }),
+      this.prisma.leakIncident.count(),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

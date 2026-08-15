@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PipelinesService } from './pipelines.service';
 import { CreatePipelineDto } from './dto/create-pipeline.dto';
 import { UpdatePipelineDto } from './dto/update-pipeline.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../../generated/prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Pipelines')
 @ApiBearerAuth()
@@ -22,9 +23,9 @@ export class PipelinesController {
 
   @Get()
   @ApiOperation({ summary: 'Get all pipelines' })
-  @ApiResponse({ status: 200, description: 'List of pipelines' })
-  async findAll() {
-    return this.pipelinesService.findAll();
+  @ApiResponse({ status: 200, description: 'Paginated list of pipelines' })
+  async findAll(@Query() query: PaginationQueryDto) {
+    return this.pipelinesService.findAll(query.page, query.limit);
   }
 
   @Get(':id')

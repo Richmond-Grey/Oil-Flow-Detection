@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SegmentsService } from './segments.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../../generated/prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Segments')
 @ApiBearerAuth()
@@ -22,9 +23,9 @@ export class SegmentsController {
 
   @Get()
   @ApiOperation({ summary: 'Get all segments' })
-  @ApiResponse({ status: 200, description: 'List of segments' })
-  async findAll() {
-    return this.segmentsService.findAll();
+  @ApiResponse({ status: 200, description: 'Paginated list of segments' })
+  async findAll(@Query() query: PaginationQueryDto) {
+    return this.segmentsService.findAll(query.page, query.limit);
   }
 
   @Get(':id')

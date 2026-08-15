@@ -26,18 +26,26 @@ export class ReadingsService {
     });
   }
 
-  async findBySensor(sensorId?: string, limit = 50) {
-    if (sensorId) {
-      return this.prisma.sensorReading.findMany({
-        where: { sensorId },
+  async findBySensor(sensorId?: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const where = sensorId ? { sensorId } : {};
+
+    const [data, total] = await Promise.all([
+      this.prisma.sensorReading.findMany({
+        where,
+        skip,
         take: limit,
         orderBy: { recordedAt: 'desc' },
-      });
-    }
+      }),
+      this.prisma.sensorReading.count({ where }),
+    ]);
 
-    return this.prisma.sensorReading.findMany({
-      take: limit,
-      orderBy: { recordedAt: 'desc' },
-    });
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 }

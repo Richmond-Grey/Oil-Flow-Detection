@@ -7,7 +7,7 @@ export class CreateReadingDto {
   @IsNotEmpty()
   sensorId!: string;
 
-  @ApiProperty({ example: 45.2, description: 'Pressure reading in PSI or bar' })
+  @ApiProperty({ example: 300.0, description: 'Pressure reading in PSI or bar' })
   @IsNumber()
   pressure!: number;
 

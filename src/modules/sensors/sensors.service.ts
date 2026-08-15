@@ -20,12 +20,26 @@ export class SensorsService {
     });
   }
 
-  async findAll() {
-    return this.prisma.sensor.findMany({
-      include: {
-        segment: true,
-      },
-    });
+  async findAll(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.sensor.findMany({
+        skip,
+        take: limit,
+        include: {
+          segment: true,
+        },
+      }),
+      this.prisma.sensor.count(),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

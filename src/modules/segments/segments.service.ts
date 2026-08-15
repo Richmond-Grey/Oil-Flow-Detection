@@ -24,15 +24,29 @@ export class SegmentsService {
     });
   }
 
-  async findAll() {
-    return this.prisma.segment.findMany({
-      include: {
-        pipeline: true,
-        startSensor: true,
-        endSensor: true,
-        sensors: true,
-      },
-    });
+  async findAll(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.segment.findMany({
+        skip,
+        take: limit,
+        include: {
+          pipeline: true,
+          startSensor: true,
+          endSensor: true,
+          sensors: true,
+        },
+      }),
+      this.prisma.segment.count(),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

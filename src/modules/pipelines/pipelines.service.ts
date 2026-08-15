@@ -13,17 +13,31 @@ export class PipelinesService {
     });
   }
 
-  async findAll() {
-    return this.prisma.pipeline.findMany({
-      include: {
-        segments: {
-          include: {
-            startSensor: true,
-            endSensor: true,
+  async findAll(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.pipeline.findMany({
+        skip,
+        take: limit,
+        include: {
+          segments: {
+            include: {
+              startSensor: true,
+              endSensor: true,
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.pipeline.count(),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

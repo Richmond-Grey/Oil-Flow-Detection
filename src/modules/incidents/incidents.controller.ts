@@ -1,6 +1,7 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { IncidentsService } from './incidents.service';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Incidents')
 @ApiBearerAuth()
@@ -10,9 +11,9 @@ export class IncidentsController {
 
   @Get()
   @ApiOperation({ summary: 'List all detected leak incidents' })
-  @ApiResponse({ status: 200, description: 'List of incidents' })
-  async findAll() {
-    return this.incidentsService.findAll();
+  @ApiResponse({ status: 200, description: 'Paginated list of incidents' })
+  async findAll(@Query() query: PaginationQueryDto) {
+    return this.incidentsService.findAll(query.page, query.limit);
   }
 
   @Get(':id')

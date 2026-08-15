@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ReadingsService } from './readings.service';
 import { CreateReadingDto } from './dto/create-reading.dto';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Readings')
 @ApiBearerAuth()
@@ -20,13 +21,11 @@ export class ReadingsController {
   @Get()
   @ApiOperation({ summary: 'Get recent sensor readings' })
   @ApiQuery({ name: 'sensorId', required: false, type: String })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'List of readings' })
+  @ApiResponse({ status: 200, description: 'Paginated list of readings' })
   async findBySensor(
     @Query('sensorId') sensorId?: string,
-    @Query('limit') limit?: number,
+    @Query() query?: PaginationQueryDto,
   ) {
-    const take = limit ? Number(limit) : 50;
-    return this.readingsService.findBySensor(sensorId, take);
+    return this.readingsService.findBySensor(sensorId, query?.page, query?.limit);
   }
 }

@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SensorsService } from './sensors.service';
 import { CreateSensorDto } from './dto/create-sensor.dto';
 import { UpdateSensorDto } from './dto/update-sensor.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../../generated/prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 @ApiTags('Sensors')
 @ApiBearerAuth()
@@ -23,9 +24,9 @@ export class SensorsController {
 
   @Get()
   @ApiOperation({ summary: 'Get all field sensors' })
-  @ApiResponse({ status: 200, description: 'List of sensors' })
-  async findAll() {
-    return this.sensorsService.findAll();
+  @ApiResponse({ status: 200, description: 'Paginated list of sensors' })
+  async findAll(@Query() query: PaginationQueryDto) {
+    return this.sensorsService.findAll(query.page, query.limit);
   }
 
   @Get(':id')
