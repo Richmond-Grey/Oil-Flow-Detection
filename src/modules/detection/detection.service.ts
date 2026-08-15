@@ -48,6 +48,9 @@ export class DetectionService implements OnModuleInit {
       this.configService.get<number>('detection.flowMismatchTolerancePercent') || 10;
     const minSustainedTicks =
       this.configService.get<number>('detection.minSustainedTicks') || 3;
+    // Flow-only warning threshold — falls back to minSustainedTicks if not independently configured
+    const flowMinSustainedTicks =
+      this.configService.get<number>('detection.flowMinSustainedTicks') || minSustainedTicks;
 
     this.logger.log('=== [DETECTION ENGINE CYCLE START] ===');
 
@@ -73,6 +76,7 @@ export class DetectionService implements OnModuleInit {
         pressureDropThresholdPct,
         flowMismatchTolerancePct,
         minSustainedTicks,
+        flowMinSustainedTicks,
       });
     }
 
@@ -86,9 +90,10 @@ export class DetectionService implements OnModuleInit {
       pressureDropThresholdPct: number;
       flowMismatchTolerancePct: number;
       minSustainedTicks: number;
+      flowMinSustainedTicks: number;
     },
   ) {
-    const { sampleSize, pressureDropThresholdPct, flowMismatchTolerancePct, minSustainedTicks } =
+    const { sampleSize, pressureDropThresholdPct, flowMismatchTolerancePct, minSustainedTicks, flowMinSustainedTicks } =
       config;
 
     // Rule 1: Must have both start and end sensors assigned
@@ -172,20 +177,28 @@ export class DetectionService implements OnModuleInit {
     }
 
     const flowSignalTriggered = sustainedFlowTicks >= minSustainedTicks;
+    // FIX (Issue 2): Flow-only low-confidence path uses its own independently tunable tick threshold.
+    // Falls back to minSustainedTicks if DETECTION_FLOW_MIN_SUSTAINED_TICKS is not configured.
+    const flowAloneSignalTriggered = sustainedFlowTicks >= flowMinSustainedTicks;
 
     const existingOpenIncident = segment.incidents[0];
 
     this.logger.log(
       `[EVAL] Segment ${segment.id} | Start Sensor: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
         1,
-      )}%, Ticks: ${sustainedPressureTicks}) | End Sensor: ${segment.endSensor.serialNumber} (Flow Diff: ${flowMismatchPct.toFixed(
+      )}%, Ticks: ${sustainedPressureTicks}/${minSustainedTicks}) | End Sensor: ${segment.endSensor.serialNumber} (Flow Diff: ${flowMismatchPct.toFixed(
         1,
-      )}%, Ticks: ${sustainedFlowTicks}) | Open Incident: ${existingOpenIncident ? 'YES' : 'NO'}`,
+      )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${existingOpenIncident ? `YES (confidence=${Number(existingOpenIncident.confidence).toFixed(2)})` : 'NO'}`,
     );
 
     // Decision Logic
     const bothSignalsAgree = pressureSignalTriggered && flowSignalTriggered;
-    const lowerConfidenceSignal = !bothSignalsAgree && highSustainedPressureTriggered;
+    // Pressure-only low-confidence path: requires an extended sustained pressure drop (minSustainedTicks + 2)
+    const lowerConfidencePressure = !bothSignalsAgree && highSustainedPressureTriggered;
+    // FIX (Issue 2): Flow-only low-confidence path: sustained flow mismatch alone raises a WARNING.
+    // This is symmetric to the pressure-only path. Uses flowAloneSignalTriggered (flowMinSustainedTicks).
+    const lowerConfidenceFlow = !bothSignalsAgree && !pressureSignalTriggered && flowAloneSignalTriggered;
+    const lowerConfidenceSignal = lowerConfidencePressure || lowerConfidenceFlow;
 
     // --- CASE 1: ANOMALY DETECTED ---
     if (bothSignalsAgree || lowerConfidenceSignal) {
@@ -193,8 +206,12 @@ export class DetectionService implements OnModuleInit {
       const targetSegmentStatus = bothSignalsAgree ? SegmentStatus.LEAK : SegmentStatus.WARNING;
 
       if (existingOpenIncident) {
-        // Sub-case A: Check if existing incident can be upgraded from low-confidence (0.65) to high-confidence (0.95)
-        if (bothSignalsAgree && existingOpenIncident.confidence < 0.9) {
+        const existingConfidence = Number(existingOpenIncident.confidence);
+
+        // FIX (Issue 1) — Sub-case A: UPGRADE path.
+        // If the existing incident is low-confidence (WARNING, ~0.65) and both signals now
+        // agree, upgrade the same incident to high-confidence rather than creating a duplicate.
+        if (bothSignalsAgree && existingConfidence < 0.9) {
           const updatedIncident = await this.prisma.leakIncident.update({
             where: { id: existingOpenIncident.id },
             data: { confidence: 0.95 },
@@ -206,10 +223,10 @@ export class DetectionService implements OnModuleInit {
           });
 
           this.logger.warn(
-            `⚡ [INCIDENT UPGRADED] Upgraded Incident ${updatedIncident.id} for Segment ${segment.id} from low confidence to high confidence (0.95). Segment status updated to LEAK.`,
+            `⚡ [INCIDENT UPGRADED] Incident ${updatedIncident.id} on Segment ${segment.id} upgraded: confidence ${existingConfidence.toFixed(2)} → 0.95, segment status WARNING → LEAK. Both signals now agree.`,
           );
 
-          // Emit upgrade event for downstream listeners
+          // Emit upgrade event so downstream alerting/notification modules can react
           const payload: IncidentCreatedEvent = {
             incidentId: updatedIncident.id,
             segmentId: segment.id,
@@ -221,12 +238,22 @@ export class DetectionService implements OnModuleInit {
             flowMismatchPct,
           };
           this.eventEmitter.emit('incident.upgraded', payload);
+          this.logger.log(`[EVENT EMITTED] 'incident.upgraded' event emitted for Incident ${updatedIncident.id}`);
           return;
         }
 
-        // Sub-case B: Already high-confidence or remaining at low-confidence -> skip as duplicate
+        // Sub-case B: Already high-confidence (LEAK-level, ~0.95) — skip, no change needed.
+        if (existingConfidence >= 0.9) {
+          this.logger.log(
+            `[DUPLICATE SKIPPED - HIGH CONFIDENCE] Segment ${segment.id} already has a high-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). No action taken.`,
+          );
+          return;
+        }
+
+        // Sub-case C: Existing incident is also low-confidence (WARNING) and signals haven't
+        // escalated to both-agree yet — nothing new to record.
         this.logger.log(
-          `[DUPLICATE SKIPPED] Segment ${segment.id} already has an OPEN incident (${existingOpenIncident.id}) with confidence ${existingOpenIncident.confidence}. Status remains: ${segment.status}`,
+          `[DUPLICATE SKIPPED - SAME TIER] Segment ${segment.id} already has a low-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). Signals unchanged. No action taken.`,
         );
         return;
       }

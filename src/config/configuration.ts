@@ -15,5 +15,10 @@ export default () => ({
     pressureDropThresholdPercent: parseFloat(process.env.DETECTION_PRESSURE_DROP_THRESHOLD_PCT || '15'),
     flowMismatchTolerancePercent: parseFloat(process.env.DETECTION_FLOW_MISMATCH_TOLERANCE_PCT || '10'),
     minSustainedTicks: parseInt(process.env.DETECTION_MIN_SUSTAINED_TICKS || '3', 10),
+    // Optional: override tick threshold for the flow-only low-confidence path independently.
+    // If not set, detection.service.ts falls back to minSustainedTicks.
+    flowMinSustainedTicks: process.env.DETECTION_FLOW_MIN_SUSTAINED_TICKS
+      ? parseInt(process.env.DETECTION_FLOW_MIN_SUSTAINED_TICKS, 10)
+      : undefined,
   },
 });

@@ -14,6 +14,8 @@ export const envSchema = z.object({
   DETECTION_PRESSURE_DROP_THRESHOLD_PCT: z.coerce.number().default(15),
   DETECTION_FLOW_MISMATCH_TOLERANCE_PCT: z.coerce.number().default(10),
   DETECTION_MIN_SUSTAINED_TICKS: z.coerce.number().default(3),
+  // Optional: set independently to tune the flow-only WARNING tick threshold
+  DETECTION_FLOW_MIN_SUSTAINED_TICKS: z.coerce.number().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
