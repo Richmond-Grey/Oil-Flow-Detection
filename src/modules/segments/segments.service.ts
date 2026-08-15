@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
@@ -7,6 +7,36 @@ import { UpdateSegmentDto } from './dto/update-segment.dto';
 export class SegmentsService {
   constructor(private prisma: PrismaService) {}
 
+  private async validateSensorAssignment(startSensorId?: string, endSensorId?: string, excludeSegmentId?: string) {
+    if (startSensorId) {
+      const existing = await this.prisma.segment.findFirst({
+        where: {
+          OR: [{ startSensorId }, { endSensorId: startSensorId }],
+          ...(excludeSegmentId ? { NOT: { id: excludeSegmentId } } : {}),
+        },
+      });
+      if (existing) {
+        throw new ConflictException(
+          `Sensor ${startSensorId} is already assigned as a start or end sensor on Segment ${existing.id}`,
+        );
+      }
+    }
+
+    if (endSensorId) {
+      const existing = await this.prisma.segment.findFirst({
+        where: {
+          OR: [{ startSensorId: endSensorId }, { endSensorId }],
+          ...(excludeSegmentId ? { NOT: { id: excludeSegmentId } } : {}),
+        },
+      });
+      if (existing) {
+        throw new ConflictException(
+          `Sensor ${endSensorId} is already assigned as a start or end sensor on Segment ${existing.id}`,
+        );
+      }
+    }
+  }
+
   async create(dto: CreateSegmentDto) {
     const pipelineExists = await this.prisma.pipeline.findUnique({
       where: { id: dto.pipelineId },
@@ -14,6 +44,8 @@ export class SegmentsService {
     if (!pipelineExists) {
       throw new NotFoundException(`Pipeline with ID ${dto.pipelineId} not found`);
     }
+
+    await this.validateSensorAssignment(dto.startSensorId, dto.endSensorId);
 
     return this.prisma.segment.create({
       data: dto,
@@ -70,6 +102,7 @@ export class SegmentsService {
 
   async update(id: string, dto: UpdateSegmentDto) {
     await this.findOne(id);
+    await this.validateSensorAssignment(dto.startSensorId, dto.endSensorId, id);
     return this.prisma.segment.update({
       where: { id },
       data: dto,

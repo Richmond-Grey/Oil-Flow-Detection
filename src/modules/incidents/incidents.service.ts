@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UpdateIncidentDto } from './dto/update-incident.dto';
+import { IncidentStatus } from '../../../generated/prisma/client';
 
 @Injectable()
 export class IncidentsService {
@@ -53,5 +55,28 @@ export class IncidentsService {
     }
 
     return incident;
+  }
+
+  async acknowledge(id: string, dto: UpdateIncidentDto) {
+    const incident = await this.findOne(id);
+
+    if (incident.status === IncidentStatus.RESOLVED) {
+      throw new BadRequestException(`Cannot acknowledge incident ${id} because it is already RESOLVED`);
+    }
+
+    return this.prisma.leakIncident.update({
+      where: { id },
+      data: {
+        status: dto.status,
+      },
+      include: {
+        segment: {
+          include: {
+            pipeline: true,
+          },
+        },
+        alerts: true,
+      },
+    });
   }
 }

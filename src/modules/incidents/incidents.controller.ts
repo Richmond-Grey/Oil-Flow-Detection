@@ -1,7 +1,10 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { IncidentsService } from './incidents.service';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { UpdateIncidentDto } from './dto/update-incident.dto';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { UserRole } from '../../../generated/prisma/client';
 
 @ApiTags('Incidents')
 @ApiBearerAuth()
@@ -22,5 +25,16 @@ export class IncidentsController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   async findOne(@Param('id') id: string) {
     return this.incidentsService.findOne(id);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.ADMIN, UserRole.OPERATOR)
+  @ApiOperation({ summary: 'Acknowledge an open leak incident (Admin and Operator only)' })
+  @ApiResponse({ status: 200, description: 'Incident status updated to ACKNOWLEDGED' })
+  @ApiResponse({ status: 400, description: 'Invalid status transition or validation failure' })
+  @ApiResponse({ status: 403, description: 'Forbidden for FIELD_ENGINEER role' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
+  async update(@Param('id') id: string, @Body() dto: UpdateIncidentDto) {
+    return this.incidentsService.acknowledge(id, dto);
   }
 }
