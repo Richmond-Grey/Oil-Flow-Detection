@@ -1,18 +1,33 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body } from '@nestjs/common';
 import { SimulationService } from './simulation.service';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
+import { IsEmail, IsNumber, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class StartSimulationDto {
+  @IsEmail()
   email: string;
+
+  @IsString()
   passwordConfirm: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
   intervalMs?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
   randomLeakChance?: number;
+
+  @IsOptional()
+  @IsString()
   targetLeakSensorId?: string;
 }
 
 export class TargetLeakDto {
+  @IsOptional()
+  @IsString()
   sensorId?: string;
 }
 
