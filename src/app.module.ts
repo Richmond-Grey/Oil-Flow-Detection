@@ -21,6 +21,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DetectionModule } from './modules/detection/detection.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
+import { SimulationModule } from './modules/simulation/simulation.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AlertsModule } from './modules/alerts/alerts.module';
     HealthModule,
     DetectionModule,
     AlertsModule,
+    SimulationModule,
   ],
   providers: [
     {
