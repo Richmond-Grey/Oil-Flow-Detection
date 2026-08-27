@@ -16,9 +16,29 @@ export interface IncidentCreatedEvent {
   flowMismatchPct: number;
 }
 
+export interface MlSegmentStatus {
+  segmentId: string;
+  segmentName?: string;
+  timestamp: string;
+  input: {
+    pressure: number;
+    flow_rate: number;
+    temperature: number;
+  };
+  response: {
+    leak_probability: number;
+    prediction: string;
+  } | null;
+  error: string | null;
+}
+
 @Injectable()
 export class DetectionService implements OnModuleInit {
   private readonly logger = new Logger(DetectionService.name);
+
+  // Tracks ML service reachability status and latest per-segment ML predictions
+  private mlLastCycleReachable: boolean = false;
+  private mlLatestSegmentResults: Map<string, MlSegmentStatus> = new Map();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -40,6 +60,59 @@ export class DetectionService implements OnModuleInit {
     this.schedulerRegistry.addInterval('detection-engine-cycle', interval);
   }
 
+  public getMlStatus() {
+    return {
+      reachableOnLastCycle: this.mlLastCycleReachable,
+      lastEvaluatedAt: new Date().toISOString(),
+      segments: Array.from(this.mlLatestSegmentResults.values()),
+    };
+  }
+
+  private async callMlPredict(
+    pressure: number,
+    flowRate: number,
+    temperature: number,
+  ): Promise<{ leak_probability: number; prediction: string } | null> {
+    const baseUrl = this.configService.get<string>('detection.mlServiceUrl') || 'http://localhost:8000';
+    const url = `${baseUrl.replace(/\/$/, '')}/predict`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pressure,
+          flow_rate: flowRate,
+          temperature,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        this.logger.warn(`[ML SERVICE WARNING] ML service at ${url} responded with status HTTP ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json();
+      return {
+        leak_probability: data.leak_probability,
+        prediction: data.prediction,
+      };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      const isTimeout = err.name === 'AbortError';
+      this.logger.warn(
+        `[ML SERVICE WARNING] Failed to call ML service at ${url}: ${isTimeout ? 'Request timed out (2s limit)' : err.message}`,
+      );
+      return null;
+    }
+  }
+
   async evaluateSegments(): Promise<void> {
     const sampleSize = this.configService.get<number>('detection.sampleSize') || 5;
     const pressureDropThresholdPct =
@@ -48,13 +121,11 @@ export class DetectionService implements OnModuleInit {
       this.configService.get<number>('detection.flowMismatchTolerancePercent') || 10;
     const minSustainedTicks =
       this.configService.get<number>('detection.minSustainedTicks') || 3;
-    // Flow-only warning threshold — falls back to minSustainedTicks if not independently configured
     const flowMinSustainedTicks =
       this.configService.get<number>('detection.flowMinSustainedTicks') || minSustainedTicks;
 
     this.logger.log('=== [DETECTION ENGINE CYCLE START] ===');
 
-    // Fetch all segments with start & end sensors loaded
     const segments = await this.prisma.segment.findMany({
       include: {
         startSensor: true,
@@ -70,15 +141,23 @@ export class DetectionService implements OnModuleInit {
       return;
     }
 
+    let cycleMlAnySuccess = false;
+
     for (const segment of segments) {
-      await this.evaluateSingleSegment(segment, {
+      const mlSuccess = await this.evaluateSingleSegment(segment, {
         sampleSize,
         pressureDropThresholdPct,
         flowMismatchTolerancePct,
         minSustainedTicks,
         flowMinSustainedTicks,
       });
+
+      if (mlSuccess) {
+        cycleMlAnySuccess = true;
+      }
     }
+
+    this.mlLastCycleReachable = cycleMlAnySuccess;
 
     this.logger.log('=== [DETECTION ENGINE CYCLE END] ===\n');
   }
@@ -92,7 +171,7 @@ export class DetectionService implements OnModuleInit {
       minSustainedTicks: number;
       flowMinSustainedTicks: number;
     },
-  ) {
+  ): Promise<boolean> {
     const { sampleSize, pressureDropThresholdPct, flowMismatchTolerancePct, minSustainedTicks, flowMinSustainedTicks } =
       config;
 
@@ -107,7 +186,7 @@ export class DetectionService implements OnModuleInit {
             : 'endSensor'
         }`,
       );
-      return;
+      return false;
     }
 
     // Fetch most recent N readings for start and end sensors
@@ -128,13 +207,17 @@ export class DetectionService implements OnModuleInit {
       this.logger.log(
         `[SKIP] Segment ID ${segment.id}: Insufficient reading history (Start: ${startReadings.length}/${minSustainedTicks}, End: ${endReadings.length}/${minSustainedTicks}).`,
       );
-      return;
+      return false;
     }
 
+    // Latest readings for threshold & ML evaluation
+    const recentStartReading = startReadings[0];
+    const recentPressure = recentStartReading.pressure;
+    const recentFlowRate = recentStartReading.flowRate ?? 0;
+    const recentTemperature = recentStartReading.temperature ?? 0;
+
     // Evaluate Pressure Signal at Start Sensor
-    // Baseline = average of older readings in sample window, excluding recent tick
     const startPressures = startReadings.map((r) => r.pressure);
-    const recentPressure = startPressures[0];
     const olderPressures = startPressures.slice(1);
     const baselinePressure =
       olderPressures.reduce((sum, p) => sum + p, 0) / (olderPressures.length || 1);
@@ -142,7 +225,6 @@ export class DetectionService implements OnModuleInit {
     const pressureDropPct =
       baselinePressure > 0 ? ((baselinePressure - recentPressure) / baselinePressure) * 100 : 0;
 
-    // Check consecutive readings exceeding pressure drop threshold
     let sustainedPressureTicks = 0;
     for (const r of startReadings) {
       const drop = baselinePressure > 0 ? ((baselinePressure - r.pressure) / baselinePressure) * 100 : 0;
@@ -156,13 +238,12 @@ export class DetectionService implements OnModuleInit {
     const pressureSignalTriggered = sustainedPressureTicks >= minSustainedTicks;
     const highSustainedPressureTriggered = sustainedPressureTicks >= minSustainedTicks + 2;
 
-    // Evaluate Flow Signal (Mismatch between Start and End sensors)
+    // Evaluate Flow Signal
     const recentStartFlow = startReadings[0].flowRate ?? 0;
     const recentEndFlow = endReadings[0].flowRate ?? 0;
     const flowMismatchPct =
       recentStartFlow > 0 ? Math.abs((recentStartFlow - recentEndFlow) / recentStartFlow) * 100 : 0;
 
-    // Check consecutive ticks with flow mismatch
     let sustainedFlowTicks = 0;
     const minReadingsLen = Math.min(startReadings.length, endReadings.length);
     for (let i = 0; i < minReadingsLen; i++) {
@@ -177,28 +258,34 @@ export class DetectionService implements OnModuleInit {
     }
 
     const flowSignalTriggered = sustainedFlowTicks >= minSustainedTicks;
-    // FIX (Issue 2): Flow-only low-confidence path uses its own independently tunable tick threshold.
-    // Falls back to minSustainedTicks if DETECTION_FLOW_MIN_SUSTAINED_TICKS is not configured.
     const flowAloneSignalTriggered = sustainedFlowTicks >= flowMinSustainedTicks;
 
     const existingOpenIncident = segment.incidents[0];
 
-    this.logger.log(
-      `[EVAL] Segment ${segment.id} | Start Sensor: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
-        1,
-      )}%, Ticks: ${sustainedPressureTicks}/${minSustainedTicks}) | End Sensor: ${segment.endSensor.serialNumber} (Flow Diff: ${flowMismatchPct.toFixed(
-        1,
-      )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${existingOpenIncident ? `YES (confidence=${Number(existingOpenIncident.confidence).toFixed(2)})` : 'NO'}`,
-    );
+    // ML Service call (parallel observation window, 2s timeout)
+    const mlResponse = await this.callMlPredict(recentPressure, recentFlowRate, recentTemperature);
 
-    // Decision Logic
+    // Save latest ML result per segment for GET /detection/ml-status endpoint
+    this.mlLatestSegmentResults.set(segment.id, {
+      segmentId: segment.id,
+      segmentName: segment.name,
+      timestamp: new Date().toISOString(),
+      input: {
+        pressure: recentPressure,
+        flow_rate: recentFlowRate,
+        temperature: recentTemperature,
+      },
+      response: mlResponse,
+      error: mlResponse ? null : 'ML service unreachable or returned error',
+    });
+
+    // Decision Logic for Threshold Model
     const bothSignalsAgree = pressureSignalTriggered && flowSignalTriggered;
-    // Pressure-only low-confidence path: requires an extended sustained pressure drop (minSustainedTicks + 2)
     const lowerConfidencePressure = !bothSignalsAgree && highSustainedPressureTriggered;
-    // FIX (Issue 2): Flow-only low-confidence path: sustained flow mismatch alone raises a WARNING.
-    // This is symmetric to the pressure-only path. Uses flowAloneSignalTriggered (flowMinSustainedTicks).
     const lowerConfidenceFlow = !bothSignalsAgree && !pressureSignalTriggered && flowAloneSignalTriggered;
     const lowerConfidenceSignal = lowerConfidencePressure || lowerConfidenceFlow;
+
+    let thresholdDecision = 'NO ACTION';
 
     // --- CASE 1: ANOMALY DETECTED ---
     if (bothSignalsAgree || lowerConfidenceSignal) {
@@ -208,10 +295,8 @@ export class DetectionService implements OnModuleInit {
       if (existingOpenIncident) {
         const existingConfidence = Number(existingOpenIncident.confidence);
 
-        // FIX (Issue 1) — Sub-case A: UPGRADE path.
-        // If the existing incident is low-confidence (WARNING, ~0.65) and both signals now
-        // agree, upgrade the same incident to high-confidence rather than creating a duplicate.
         if (bothSignalsAgree && existingConfidence < 0.9) {
+          thresholdDecision = 'upgraded';
           const updatedIncident = await this.prisma.leakIncident.update({
             where: { id: existingOpenIncident.id },
             data: { confidence: 0.95 },
@@ -222,11 +307,12 @@ export class DetectionService implements OnModuleInit {
             data: { status: SegmentStatus.LEAK },
           });
 
+          this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+
           this.logger.warn(
             `⚡ [INCIDENT UPGRADED] Incident ${updatedIncident.id} on Segment ${segment.id} upgraded: confidence ${existingConfidence.toFixed(2)} → 0.95, segment status WARNING → LEAK. Both signals now agree.`,
           );
 
-          // Emit upgrade event so downstream alerting/notification modules can react
           const payload: IncidentCreatedEvent = {
             incidentId: updatedIncident.id,
             segmentId: segment.id,
@@ -239,26 +325,28 @@ export class DetectionService implements OnModuleInit {
           };
           this.eventEmitter.emit('incident.upgraded', payload);
           this.logger.log(`[EVENT EMITTED] 'incident.upgraded' event emitted for Incident ${updatedIncident.id}`);
-          return;
+          return mlResponse !== null;
         }
 
-        // Sub-case B: Already high-confidence (LEAK-level, ~0.95) — skip, no change needed.
         if (existingConfidence >= 0.9) {
+          thresholdDecision = 'duplicate';
+          this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
           this.logger.log(
             `[DUPLICATE SKIPPED - HIGH CONFIDENCE] Segment ${segment.id} already has a high-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). No action taken.`,
           );
-          return;
+          return mlResponse !== null;
         }
 
-        // Sub-case C: Existing incident is also low-confidence (WARNING) and signals haven't
-        // escalated to both-agree yet — nothing new to record.
+        thresholdDecision = 'duplicate';
+        this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
         this.logger.log(
           `[DUPLICATE SKIPPED - SAME TIER] Segment ${segment.id} already has a low-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). Signals unchanged. No action taken.`,
         );
-        return;
+        return mlResponse !== null;
       }
 
-      // Create new incident & update segment status
+      thresholdDecision = targetSegmentStatus === SegmentStatus.LEAK ? 'LEAK' : 'WARNING';
+
       const incident = await this.prisma.leakIncident.create({
         data: {
           segmentId: segment.id,
@@ -273,12 +361,12 @@ export class DetectionService implements OnModuleInit {
         data: { status: targetSegmentStatus },
       });
 
+      this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+
       this.logger.warn(
         `🚨 [INCIDENT RAISED] Created Incident ${incident.id} for Segment ${segment.id} | Confidence: ${confidence} | Status set to: ${targetSegmentStatus} | Both Signals: ${bothSignalsAgree}`,
       );
 
-      // DECOUPLED ALERTING DELEGATION:
-      // Emit internal event so Alerting Module can pick it up for dispatch/retry queues
       const payload: IncidentCreatedEvent = {
         incidentId: incident.id,
         segmentId: segment.id,
@@ -292,7 +380,7 @@ export class DetectionService implements OnModuleInit {
 
       this.eventEmitter.emit('incident.created', payload);
       this.logger.log(`[EVENT EMITTED] 'incident.created' event emitted for Incident ${incident.id}`);
-      return;
+      return mlResponse !== null;
     }
 
     // --- CASE 2: AUTO-RESOLVE OPEN INCIDENT ---
@@ -301,6 +389,7 @@ export class DetectionService implements OnModuleInit {
       const flowNormal = flowMismatchPct < flowMismatchTolerancePct / 2;
 
       if (pressureNormal && flowNormal) {
+        thresholdDecision = 'RESOLVED';
         const resolvedIncident = await this.prisma.leakIncident.update({
           where: { id: existingOpenIncident.id },
           data: {
@@ -313,6 +402,8 @@ export class DetectionService implements OnModuleInit {
           where: { id: segment.id },
           data: { status: SegmentStatus.NORMAL },
         });
+
+        this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
 
         this.logger.log(
           `✅ [INCIDENT RESOLVED] Incident ${existingOpenIncident.id} on Segment ${segment.id} resolved. Segment status flipped back to NORMAL.`,
@@ -330,10 +421,39 @@ export class DetectionService implements OnModuleInit {
         };
         this.eventEmitter.emit('incident.resolved', payload);
         this.logger.log(`[EVENT EMITTED] 'incident.resolved' event emitted for Incident ${resolvedIncident.id}`);
-        return;
+        return mlResponse !== null;
       }
     }
 
-    this.logger.log(`[NO ACTION] Segment ${segment.id} operating within normal thresholds.`);
+    thresholdDecision = 'NO ACTION';
+    this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+
+    return mlResponse !== null;
+  }
+
+  private logComparison(
+    segment: any,
+    recentPressure: number,
+    pressureDropPct: number,
+    sustainedPressureTicks: number,
+    minSustainedTicks: number,
+    flowMismatchPct: number,
+    sustainedFlowTicks: number,
+    flowMinSustainedTicks: number,
+    existingOpenIncident: any,
+    thresholdDecision: string,
+    mlResponse: { leak_probability: number; prediction: string } | null,
+  ) {
+    const mlLogStr = mlResponse
+      ? `[ML: pred=${mlResponse.prediction}, prob=${mlResponse.leak_probability}]`
+      : `[ML: UNREACHABLE / ERROR]`;
+
+    this.logger.log(
+      `[EVAL] Segment ${segment.id} | Start Sensor: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
+        1,
+      )}%, Ticks: ${sustainedPressureTicks}/${minSustainedTicks}) | End Sensor: ${segment.endSensor.serialNumber} (Flow Diff: ${flowMismatchPct.toFixed(
+        1,
+      )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${existingOpenIncident ? `YES` : 'NO'} | Threshold Decision: ${thresholdDecision} | ${mlLogStr}`,
+    );
   }
 }

@@ -10,6 +10,7 @@ export default () => ({
   },
   corsOrigin: process.env.CORS_ORIGIN || '*',
   detection: {
+    mlServiceUrl: process.env.ML_SERVICE_URL || 'http://localhost:8000',
     intervalMs: parseInt(process.env.DETECTION_INTERVAL_MS || '10000', 10),
     sampleSize: parseInt(process.env.DETECTION_SAMPLE_SIZE || '5', 10),
     pressureDropThresholdPercent: parseFloat(process.env.DETECTION_PRESSURE_DROP_THRESHOLD_PCT || '15'),

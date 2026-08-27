@@ -9,6 +9,7 @@ export const envSchema = z.object({
   JWT_ACCESS_EXPIRY: z.string().default('15m'),
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('*'),
+  ML_SERVICE_URL: z.string().default('http://localhost:8000'),
   DETECTION_INTERVAL_MS: z.coerce.number().default(10000),
   DETECTION_SAMPLE_SIZE: z.coerce.number().default(5),
   DETECTION_PRESSURE_DROP_THRESHOLD_PCT: z.coerce.number().default(15),

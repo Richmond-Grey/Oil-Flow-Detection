@@ -1,0 +1,9 @@
+
+Postgres cluster pipeline-flow-detection-db created
+  Username:    postgres
+  Password:    XRI790R1ElrJ3U5
+  Hostname:    pipeline-flow-detection-db.internal
+  Flycast:     fdaa:bd:5df:0:1::2
+  Proxy port:  5432
+  Postgres port:  5433
+  Connection string: postgres://postgres:XRI790R1ElrJ3U5@pipeline-flow-detection-db.flycast:5432
