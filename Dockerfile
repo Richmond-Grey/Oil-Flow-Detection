@@ -21,12 +21,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --only=production
-
+# Run npm ci without skipping dev dependencies if custom builders need them,
+# or copy generated node_modules directly from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/generated/prisma ./generated/prisma
+COPY --from=builder /app/generated ./generated
 
 EXPOSE 3000
 
-CMD ["node", "dist/main"]
+# Fallback check: try running main, or src/main if dist contains src folder
+CMD ["sh", "-c", "if [ -f dist/main.js ]; then node dist/main.js; else node dist/src/main.js; fi"]
