@@ -25,42 +25,59 @@ A single unusual sensor reading could be caused by electrical noise, temporary v
 - **Threshold:** Default **15% drop** (`DETECTION_PRESSURE_DROP_THRESHOLD_PCT`).
 - **Base sustained duration:** The drop must persist for **at least `DETECTION_MIN_SUSTAINED_TICKS` consecutive readings** (default: 3).
 - **Extended sustained rule (pressure-only path):** For pressure alone to raise a low-confidence WARNING without flow confirmation, the drop must persist for **at least `minSustainedTicks + 2` consecutive readings** (default: 5).
-
-### Signal 2: Flow Rate Mismatch Signal
-- **What it checks:** Compares the fluid volume entering the segment (start sensor flow rate) against the fluid volume exiting the segment (end sensor flow rate).
+### Signal 2: Temperature-Adjusted Flow Rate Mismatch Signal
+- **What it checks:** Compares the fluid volume entering the segment (start sensor flow rate) against the fluid volume exiting the segment (end sensor flow rate), after applying a **temperature baseline flow compensation**.
+- **Physical Rationale:** Crude oil viscosity drops as temperature rises, which naturally increases the flow rate for the same pressure differential — this is real fluid dynamics, not a leak signal. To prevent false positives from ambient or process temperature swings, the expected baseline flow is adjusted before the mismatch comparison:
+  $$\text{Adjusted Flow} = \text{Raw Flow} \times (1 + k \times (T_{\text{current}} - T_{\text{baseline}}))$$
+  where $k$ is `TEMP_FLOW_ADJUSTMENT_FACTOR` (default `0.002` / 0.2% per °C deviation from the segment's recent average start temperature).
 - **Threshold:** Default **10% variance/mismatch** (`DETECTION_FLOW_MISMATCH_TOLERANCE_PCT`).
 - **Base sustained duration (both-signals path):** The mismatch must persist for **at least `DETECTION_MIN_SUSTAINED_TICKS` consecutive readings** (default: 3).
 - **Flow-only low-confidence path:** Flow mismatch alone raises a WARNING when it persists for **at least `DETECTION_FLOW_MIN_SUSTAINED_TICKS` consecutive readings** (defaults to `DETECTION_MIN_SUSTAINED_TICKS` if not independently set).
+- **Cycle Logging:** Both raw flow and temperature-adjusted flow numbers (along with $\Delta T$) are logged on every evaluation cycle so the adjustment effect is clearly observable and tunable.
 
 ---
 
-## 3. Confidence Scores & Decision Outcomes
+## 3. Independent High Temperature Hazard Check (`TEMPERATURE_ANOMALY`)
 
-When evaluating a segment, the engine decides between **6 mutually exclusive outcomes**:
+In addition to leak detection signals, the Detection Engine includes an **independent HighTemperature check**.
+
+### Key Distinctions & Safety Standard:
+1. **Separate Concern from Leaks:** High temperature represents an independent thermal hazard (e.g. external fire risk, abnormal surface heating, process overheating), **not** evidence of a pipe leak. It does **not** increase leak confidence or create a `LeakIncident`.
+2. **Distinct Event & Category:** When sustained high temperature is detected, it is raised as a distinct category (`TEMPERATURE_ANOMALY`) and emits its own event (`temperature.anomaly.created`), triggering a heat hazard notification via the Alerting module without muddying leak metrics.
+3. **API 521 Thermal Standard vs. Flash Point:**
+   - This threshold is **NOT** tied to crude oil's flash point (20–90°F / -7–32°C), which relates to vapor ignition risk on an exposed atmospheric spill rather than a closed, pressurized pipeline running normally.
+   - The default threshold is **65°C** (`TEMP_DANGER_THRESHOLD_C`), based on API 521 maximum ambient/solar heat gain ceiling on piping. Anything sustained above 65°C indicates abnormal external or process heating.
+4. **Sustained Duration:** The overheating must persist for `TEMP_MIN_SUSTAINED_TICKS` (or `DETECTION_MIN_SUSTAINED_TICKS`, default: 3) consecutive readings to prevent spurious spikes from triggering alarms.
+
+---
+
+## 4. Confidence Scores & Decision Outcomes
+
+When evaluating a segment, the engine decides between **6 mutually exclusive leak outcomes** (plus the independent temperature anomaly check):
 
 | Outcome | Signal Conditions | Segment Status | Confidence | Action Taken |
 | :--- | :--- | :--- | :--- | :--- |
-| **High-Confidence Leak** | Both Pressure Drop ($\ge 15\%$) **AND** Flow Mismatch ($\ge 10\%$) agree for $\ge 3$ ticks | `LEAK` | **0.95 (95%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
+| **High-Confidence Leak** | Both Pressure Drop ($\ge 15\%$) **AND** Temp-Adjusted Flow Mismatch ($\ge 10\%$) agree for $\ge 3$ ticks | `LEAK` | **0.95 (95%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
 | **Low-Confidence Warning (Pressure-only)** | Pressure drop alone persists for $\ge$ `minSustainedTicks + 2` ticks (default: 5); flow rate is not confirming | `WARNING` | **0.65 (65%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
-| **Low-Confidence Warning (Flow-only)** | Flow rate mismatch alone persists for $\ge$ `flowMinSustainedTicks` ticks (default: 3); pressure signal is not active | `WARNING` | **0.65 (65%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
+| **Low-Confidence Warning (Flow-only)** | Temp-adjusted flow rate mismatch alone persists for $\ge$ `flowMinSustainedTicks` ticks (default: 3); pressure signal is not active | `WARNING` | **0.65 (65%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
 | **Incident Upgraded** | Existing `OPEN` incident is low-confidence (~0.65, a `WARNING`), and now **both** signals agree | `LEAK` | Upgraded to **0.95** | Updates **the existing** incident's `confidence` field to `0.95`; updates segment status to `LEAK`. No second incident is created. Emits `incident.upgraded`. Logged as `[INCIDENT UPGRADED]`. |
 | **Duplicate Skipped** | Anomaly detected, but segment already has an `OPEN` incident at the same or higher confidence tier | Unchanged | Unchanged | No DB writes. Logged as `[DUPLICATE SKIPPED - HIGH CONFIDENCE]` if existing confidence ≥ 0.9, or `[DUPLICATE SKIPPED - SAME TIER]` if existing is low-confidence and signals have not escalated to both-agree. |
-| **Auto-Resolved** | An `OPEN` incident exists, but both pressure drop and flow mismatch have fallen below 50% of their threshold values | `NORMAL` | N/A | Sets incident `status: RESOLVED` with `resolvedAt` timestamp. Sets segment status to `NORMAL`. Logged as `[INCIDENT RESOLVED]`. |
+| **Auto-Resolved** | An `OPEN` incident exists, but both pressure drop and temp-adjusted flow mismatch have fallen below 50% of their threshold values | `NORMAL` | N/A | Sets incident `status: RESOLVED` with `resolvedAt` timestamp. Sets segment status to `NORMAL`. Logged as `[INCIDENT RESOLVED]`. |
 
 ---
 
-## 4. Automatic Incident Resolution
+## 5. Automatic Incident Resolution
 
 If a leak was fixed by field technicians or a simulated leak completes its duration, the system automatically recovers:
 1. The engine checks active segments with an `OPEN` incident.
-2. If both pressure drop **and** flow mismatch have fallen below 50% of their respective threshold values, the engine marks the incident as `RESOLVED`.
+2. If both pressure drop **and** temperature-adjusted flow mismatch have fallen below 50% of their respective threshold values, the engine marks the incident as `RESOLVED`.
 3. The parent segment's status is flipped back to `NORMAL`.
 
 ---
 
-## 5. Event Decoupling & Integration Architecture
+## 6. Event Decoupling & Integration Architecture
 
-The Detection Engine connects telemetry data with future alerting modules:
+The Detection Engine connects telemetry data with alerting modules:
 
 ```
 ┌────────────────────────┐      ┌────────────────────────┐      ┌────────────────────────┐
@@ -68,18 +85,19 @@ The Detection Engine connects telemetry data with future alerting modules:
 │  (Ingested telemetry)  │      │ (Two-Signal Evaluation)│      │(Listens to event queue)│
 └────────────────────────┘      └───────────┬────────────┘      └────────────────────────┘
                                             │
-                               Emits 'incident.created'
-                               Emits 'incident.upgraded'
-                               Internal EventEmitter2
+                                Emits 'incident.created'
+                                Emits 'incident.upgraded'
+                                Emits 'temperature.anomaly.created'
+                                Internal EventEmitter2
 ```
 
 - **Upstream (Inputs):** Ingested telemetry from `POST /readings` stored in PostgreSQL.
-- **Downstream (Outputs):** The Detection Engine does **not** send emails or SMS messages directly. Instead, when an incident is raised or upgraded, it emits an internal event (`incident.created` or `incident.upgraded`).
-- **Decoupled Alerting:** Future notification modules subscribe to these events to dispatch SMS/Email alerts via background queues without slowing down the core detection cycle.
+- **Downstream (Outputs):** The Detection Engine emits internal events (`incident.created`, `incident.upgraded`, `temperature.anomaly.created`).
+- **Decoupled Alerting:** Notification modules subscribe to these events to dispatch Email alerts via Resend.
 
 ---
 
-## 6. Log Tags Quick Reference
+## 7. Log Tags Quick Reference
 
 All significant events carry a structured log tag for easy `grep`/filtering in production or centralized logging:
 
@@ -88,16 +106,19 @@ All significant events carry a structured log tag for easy `grep`/filtering in p
 | `[INCIDENT RAISED]` | WARN | A new `LeakIncident` was created (any confidence level). |
 | `[INCIDENT UPGRADED]` | WARN | An existing low-confidence incident was upgraded to 0.95; segment status changed to LEAK. |
 | `[INCIDENT RESOLVED]` | LOG | An existing open incident was auto-resolved; segment status changed to NORMAL. |
+| `[HIGH TEMPERATURE HAZARD]` | WARN | Sensor sustained temperature $\ge 65^\circ\text{C}$; raises `TEMPERATURE_ANOMALY`. |
+| `[HIGH TEMPERATURE NORMALIZED]` | LOG | Sensor temperature returned below danger threshold. |
+| `[HEAT HAZARD NOTIFICATION]` | WARN | Alerting module dispatched high-temperature notification. |
 | `[DUPLICATE SKIPPED - HIGH CONFIDENCE]` | LOG | Both signals agree but incident already at 0.95 — no write needed. |
 | `[DUPLICATE SKIPPED - SAME TIER]` | LOG | Low-confidence signal but a WARNING incident already open and signals unchanged. |
-| `[EVAL]` | LOG | Per-cycle per-segment evaluation summary (tick counts vs. thresholds). |
+| `[EVAL]` | LOG | Per-cycle per-segment summary (Pressure, Raw/Adj Flow rates, $\Delta T$, mismatch %, ticks). |
 | `[SKIP]` | WARN | Segment skipped: missing sensors or insufficient reading history. |
 | `[NO ACTION]` | LOG | Segment operating within normal thresholds; no anomaly detected. |
 | `[EVENT EMITTED]` | LOG | Confirms that an internal EventEmitter2 event was dispatched. |
 
 ---
 
-## 7. Environment Configuration Variables
+## 8. Environment Configuration Variables
 
 The following variables in `.env` customize the engine's behavior:
 
@@ -122,4 +143,14 @@ DETECTION_MIN_SUSTAINED_TICKS=3
 # Optional: independently tune the flow-only WARNING tick threshold.
 # If not set, DETECTION_MIN_SUSTAINED_TICKS is used for the flow-only path as well.
 # DETECTION_FLOW_MIN_SUSTAINED_TICKS=3
+
+# Temperature Awareness Settings
+# Linear baseline flow adjustment factor per °C deviation from historical average (default 0.002 = 0.2%/°C)
+TEMP_FLOW_ADJUSTMENT_FACTOR=0.002
+
+# High temperature hazard threshold in °C (default 65°C based on API 521 solar/ambient ceiling)
+TEMP_DANGER_THRESHOLD_C=65
+
+# Optional: override sustained reading ticks required for high temperature anomaly
+# TEMP_MIN_SUSTAINED_TICKS=3
 ```

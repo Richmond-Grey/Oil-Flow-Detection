@@ -16,6 +16,18 @@ export interface IncidentCreatedEvent {
   flowMismatchPct: number;
 }
 
+export interface TemperatureAnomalyEvent {
+  segmentId: string;
+  pipelineId: string;
+  sensorId: string;
+  sensorSerialNumber: string;
+  currentTemperature: number;
+  thresholdTemperature: number;
+  sustainedTicks: number;
+  detectedAt: Date;
+  category: 'TEMPERATURE_ANOMALY';
+}
+
 export interface MlSegmentStatus {
   segmentId: string;
   segmentName?: string;
@@ -39,6 +51,9 @@ export class DetectionService implements OnModuleInit {
   // Tracks ML service reachability status and latest per-segment ML predictions
   private mlLastCycleReachable: boolean = false;
   private mlLatestSegmentResults: Map<string, MlSegmentStatus> = new Map();
+
+  // Tracks active high-temperature alert state per segment/sensor to avoid event spamming
+  private activeHighTempSensors: Set<string> = new Set();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -123,6 +138,12 @@ export class DetectionService implements OnModuleInit {
       this.configService.get<number>('detection.minSustainedTicks') || 3;
     const flowMinSustainedTicks =
       this.configService.get<number>('detection.flowMinSustainedTicks') || minSustainedTicks;
+    const tempFlowAdjustmentFactor =
+      this.configService.get<number>('detection.tempFlowAdjustmentFactor') ?? 0.002;
+    const tempDangerThresholdC =
+      this.configService.get<number>('detection.tempDangerThresholdC') ?? 65;
+    const tempMinSustainedTicks =
+      this.configService.get<number>('detection.tempMinSustainedTicks') || minSustainedTicks;
 
     this.logger.log('=== [DETECTION ENGINE CYCLE START] ===');
 
@@ -150,6 +171,9 @@ export class DetectionService implements OnModuleInit {
         flowMismatchTolerancePct,
         minSustainedTicks,
         flowMinSustainedTicks,
+        tempFlowAdjustmentFactor,
+        tempDangerThresholdC,
+        tempMinSustainedTicks,
       });
 
       if (mlSuccess) {
@@ -170,10 +194,21 @@ export class DetectionService implements OnModuleInit {
       flowMismatchTolerancePct: number;
       minSustainedTicks: number;
       flowMinSustainedTicks: number;
+      tempFlowAdjustmentFactor: number;
+      tempDangerThresholdC: number;
+      tempMinSustainedTicks: number;
     },
   ): Promise<boolean> {
-    const { sampleSize, pressureDropThresholdPct, flowMismatchTolerancePct, minSustainedTicks, flowMinSustainedTicks } =
-      config;
+    const {
+      sampleSize,
+      pressureDropThresholdPct,
+      flowMismatchTolerancePct,
+      minSustainedTicks,
+      flowMinSustainedTicks,
+      tempFlowAdjustmentFactor,
+      tempDangerThresholdC,
+      tempMinSustainedTicks,
+    } = config;
 
     // Rule 1: Must have both start and end sensors assigned
     if (!segment.startSensorId || !segment.endSensorId) {
@@ -238,18 +273,33 @@ export class DetectionService implements OnModuleInit {
     const pressureSignalTriggered = sustainedPressureTicks >= minSustainedTicks;
     const highSustainedPressureTriggered = sustainedPressureTicks >= minSustainedTicks + 2;
 
-    // Evaluate Flow Signal
-    const recentStartFlow = startReadings[0].flowRate ?? 0;
+    // Evaluate Temperature-Adjusted Flow Signal
+    // Physical rationale: crude oil viscosity drops as temperature rises, increasing flow rate naturally for same pressure.
+    // We compute the segment's recent historical baseline temperature at the start sensor.
+    const startTemperatures = startReadings.map((r) => r.temperature ?? 0);
+    const olderTemperatures = startTemperatures.slice(1);
+    const baselineTemp =
+      olderTemperatures.length > 0
+        ? olderTemperatures.reduce((sum, t) => sum + t, 0) / olderTemperatures.length
+        : recentTemperature;
+
+    const tempDelta = recentTemperature - baselineTemp;
+    // Expected baseline adjustment: higher temp -> naturally higher expected flow
+    const adjustedStartFlow = recentFlowRate * (1 + tempFlowAdjustmentFactor * tempDelta);
     const recentEndFlow = endReadings[0].flowRate ?? 0;
+
     const flowMismatchPct =
-      recentStartFlow > 0 ? Math.abs((recentStartFlow - recentEndFlow) / recentStartFlow) * 100 : 0;
+      adjustedStartFlow > 0 ? Math.abs((adjustedStartFlow - recentEndFlow) / adjustedStartFlow) * 100 : 0;
 
     let sustainedFlowTicks = 0;
     const minReadingsLen = Math.min(startReadings.length, endReadings.length);
     for (let i = 0; i < minReadingsLen; i++) {
       const sFlow = startReadings[i].flowRate ?? 0;
+      const sTemp = startReadings[i].temperature ?? 0;
+      const tDelta = sTemp - baselineTemp;
+      const adjSFlow = sFlow * (1 + tempFlowAdjustmentFactor * tDelta);
       const eFlow = endReadings[i].flowRate ?? 0;
-      const mismatch = sFlow > 0 ? Math.abs((sFlow - eFlow) / sFlow) * 100 : 0;
+      const mismatch = adjSFlow > 0 ? Math.abs((adjSFlow - eFlow) / adjSFlow) * 100 : 0;
       if (mismatch >= flowMismatchTolerancePct) {
         sustainedFlowTicks++;
       } else {
@@ -259,6 +309,16 @@ export class DetectionService implements OnModuleInit {
 
     const flowSignalTriggered = sustainedFlowTicks >= minSustainedTicks;
     const flowAloneSignalTriggered = sustainedFlowTicks >= flowMinSustainedTicks;
+
+    // --- EVALUATE INDEPENDENT HIGH TEMPERATURE CHECK (TEMPERATURE_ANOMALY) ---
+    // Check start and end sensors for sustained hazardous overheating (API 521 ceiling, default 65°C)
+    await this.evaluateHighTemperatureHazard(
+      segment,
+      startReadings,
+      endReadings,
+      tempDangerThresholdC,
+      tempMinSustainedTicks,
+    );
 
     const existingOpenIncident = segment.incidents[0];
 
@@ -307,7 +367,23 @@ export class DetectionService implements OnModuleInit {
             data: { status: SegmentStatus.LEAK },
           });
 
-          this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+          this.logComparison(
+            segment,
+            recentPressure,
+            pressureDropPct,
+            sustainedPressureTicks,
+            minSustainedTicks,
+            recentFlowRate,
+            adjustedStartFlow,
+            recentEndFlow,
+            tempDelta,
+            flowMismatchPct,
+            sustainedFlowTicks,
+            flowMinSustainedTicks,
+            existingOpenIncident,
+            thresholdDecision,
+            mlResponse,
+          );
 
           this.logger.warn(
             `⚡ [INCIDENT UPGRADED] Incident ${updatedIncident.id} on Segment ${segment.id} upgraded: confidence ${existingConfidence.toFixed(2)} → 0.95, segment status WARNING → LEAK. Both signals now agree.`,
@@ -330,7 +406,23 @@ export class DetectionService implements OnModuleInit {
 
         if (existingConfidence >= 0.9) {
           thresholdDecision = 'duplicate';
-          this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+          this.logComparison(
+            segment,
+            recentPressure,
+            pressureDropPct,
+            sustainedPressureTicks,
+            minSustainedTicks,
+            recentFlowRate,
+            adjustedStartFlow,
+            recentEndFlow,
+            tempDelta,
+            flowMismatchPct,
+            sustainedFlowTicks,
+            flowMinSustainedTicks,
+            existingOpenIncident,
+            thresholdDecision,
+            mlResponse,
+          );
           this.logger.log(
             `[DUPLICATE SKIPPED - HIGH CONFIDENCE] Segment ${segment.id} already has a high-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). No action taken.`,
           );
@@ -338,7 +430,23 @@ export class DetectionService implements OnModuleInit {
         }
 
         thresholdDecision = 'duplicate';
-        this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+        this.logComparison(
+          segment,
+          recentPressure,
+          pressureDropPct,
+          sustainedPressureTicks,
+          minSustainedTicks,
+          recentFlowRate,
+          adjustedStartFlow,
+          recentEndFlow,
+          tempDelta,
+          flowMismatchPct,
+          sustainedFlowTicks,
+          flowMinSustainedTicks,
+          existingOpenIncident,
+          thresholdDecision,
+          mlResponse,
+        );
         this.logger.log(
           `[DUPLICATE SKIPPED - SAME TIER] Segment ${segment.id} already has a low-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). Signals unchanged. No action taken.`,
         );
@@ -361,7 +469,23 @@ export class DetectionService implements OnModuleInit {
         data: { status: targetSegmentStatus },
       });
 
-      this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+      this.logComparison(
+        segment,
+        recentPressure,
+        pressureDropPct,
+        sustainedPressureTicks,
+        minSustainedTicks,
+        recentFlowRate,
+        adjustedStartFlow,
+        recentEndFlow,
+        tempDelta,
+        flowMismatchPct,
+        sustainedFlowTicks,
+        flowMinSustainedTicks,
+        existingOpenIncident,
+        thresholdDecision,
+        mlResponse,
+      );
 
       this.logger.warn(
         `🚨 [INCIDENT RAISED] Created Incident ${incident.id} for Segment ${segment.id} | Confidence: ${confidence} | Status set to: ${targetSegmentStatus} | Both Signals: ${bothSignalsAgree}`,
@@ -403,7 +527,23 @@ export class DetectionService implements OnModuleInit {
           data: { status: SegmentStatus.NORMAL },
         });
 
-        this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+        this.logComparison(
+          segment,
+          recentPressure,
+          pressureDropPct,
+          sustainedPressureTicks,
+          minSustainedTicks,
+          recentFlowRate,
+          adjustedStartFlow,
+          recentEndFlow,
+          tempDelta,
+          flowMismatchPct,
+          sustainedFlowTicks,
+          flowMinSustainedTicks,
+          existingOpenIncident,
+          thresholdDecision,
+          mlResponse,
+        );
 
         this.logger.log(
           `✅ [INCIDENT RESOLVED] Incident ${existingOpenIncident.id} on Segment ${segment.id} resolved. Segment status flipped back to NORMAL.`,
@@ -426,9 +566,94 @@ export class DetectionService implements OnModuleInit {
     }
 
     thresholdDecision = 'NO ACTION';
-    this.logComparison(segment, recentPressure, pressureDropPct, sustainedPressureTicks, minSustainedTicks, flowMismatchPct, sustainedFlowTicks, flowMinSustainedTicks, existingOpenIncident, thresholdDecision, mlResponse);
+    this.logComparison(
+      segment,
+      recentPressure,
+      pressureDropPct,
+      sustainedPressureTicks,
+      minSustainedTicks,
+      recentFlowRate,
+      adjustedStartFlow,
+      recentEndFlow,
+      tempDelta,
+      flowMismatchPct,
+      sustainedFlowTicks,
+      flowMinSustainedTicks,
+      existingOpenIncident,
+      thresholdDecision,
+      mlResponse,
+    );
 
     return mlResponse !== null;
+  }
+
+  private async evaluateHighTemperatureHazard(
+    segment: any,
+    startReadings: any[],
+    endReadings: any[],
+    tempDangerThresholdC: number,
+    tempMinSustainedTicks: number,
+  ) {
+    const sensorChecks = [
+      { sensor: segment.startSensor, readings: startReadings, label: 'Start' },
+      { sensor: segment.endSensor, readings: endReadings, label: 'End' },
+    ];
+
+    for (const { sensor, readings, label } of sensorChecks) {
+      if (!sensor || readings.length === 0) continue;
+
+      let sustainedTempTicks = 0;
+      for (const r of readings) {
+        const temp = r.temperature ?? 0;
+        if (temp >= tempDangerThresholdC) {
+          sustainedTempTicks++;
+        } else {
+          break;
+        }
+      }
+
+      const recentTemp = readings[0].temperature ?? 0;
+      const sensorKey = `${segment.id}:${sensor.id}`;
+
+      if (sustainedTempTicks >= tempMinSustainedTicks) {
+        if (!this.activeHighTempSensors.has(sensorKey)) {
+          this.activeHighTempSensors.add(sensorKey);
+
+          this.logger.warn(
+            `🔥 [HIGH TEMPERATURE HAZARD] Segment ${segment.id} ${label} Sensor ${sensor.serialNumber} sustained ${recentTemp.toFixed(
+              1,
+            )}°C (>= ${tempDangerThresholdC}°C) for ${sustainedTempTicks}/${tempMinSustainedTicks} ticks. Raising TEMPERATURE_ANOMALY.`,
+          );
+
+          const eventPayload: TemperatureAnomalyEvent = {
+            segmentId: segment.id,
+            pipelineId: segment.pipelineId,
+            sensorId: sensor.id,
+            sensorSerialNumber: sensor.serialNumber,
+            currentTemperature: recentTemp,
+            thresholdTemperature: tempDangerThresholdC,
+            sustainedTicks: sustainedTempTicks,
+            detectedAt: new Date(),
+            category: 'TEMPERATURE_ANOMALY',
+          };
+
+          this.eventEmitter.emit('temperature.anomaly.created', eventPayload);
+          this.logger.log(
+            `[EVENT EMITTED] 'temperature.anomaly.created' emitted for Segment ${segment.id} (Sensor: ${sensor.serialNumber})`,
+          );
+        }
+      } else {
+        // Temperature normalized below danger threshold
+        if (this.activeHighTempSensors.has(sensorKey) && recentTemp < tempDangerThresholdC - 2) {
+          this.activeHighTempSensors.delete(sensorKey);
+          this.logger.log(
+            `❄️ [HIGH TEMPERATURE NORMALIZED] Segment ${segment.id} ${label} Sensor ${sensor.serialNumber} temperature returned to ${recentTemp.toFixed(
+              1,
+            )}°C (< ${tempDangerThresholdC}°C).`,
+          );
+        }
+      }
+    }
   }
 
   private logComparison(
@@ -437,6 +662,10 @@ export class DetectionService implements OnModuleInit {
     pressureDropPct: number,
     sustainedPressureTicks: number,
     minSustainedTicks: number,
+    rawStartFlow: number,
+    adjustedStartFlow: number,
+    endFlow: number,
+    tempDelta: number,
     flowMismatchPct: number,
     sustainedFlowTicks: number,
     flowMinSustainedTicks: number,
@@ -449,11 +678,18 @@ export class DetectionService implements OnModuleInit {
       : `[ML: UNREACHABLE / ERROR]`;
 
     this.logger.log(
-      `[EVAL] Segment ${segment.id} | Start Sensor: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
+      `[EVAL] Segment ${segment.id} | Start: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
         1,
-      )}%, Ticks: ${sustainedPressureTicks}/${minSustainedTicks}) | End Sensor: ${segment.endSensor.serialNumber} (Flow Diff: ${flowMismatchPct.toFixed(
+      )}%, Ticks: ${sustainedPressureTicks}/${minSustainedTicks}) | Flow: RawStart=${rawStartFlow.toFixed(
         1,
-      )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${existingOpenIncident ? `YES` : 'NO'} | Threshold Decision: ${thresholdDecision} | ${mlLogStr}`,
+      )} L/min, AdjStart=${adjustedStartFlow.toFixed(1)} L/min (ΔT=${tempDelta > 0 ? '+' : ''}${tempDelta.toFixed(
+        1,
+      )}°C), End=${endFlow.toFixed(1)} L/min (Diff: ${flowMismatchPct.toFixed(
+        1,
+      )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${
+        existingOpenIncident ? `YES` : 'NO'
+      } | Threshold Decision: ${thresholdDecision} | ${mlLogStr}`,
     );
   }
 }
+

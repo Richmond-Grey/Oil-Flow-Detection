@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertChannel, AlertStatus } from '../../../generated/prisma/client';
-import { IncidentCreatedEvent } from '../detection/detection.service';
+import { IncidentCreatedEvent, TemperatureAnomalyEvent } from '../detection/detection.service';
 
 @Injectable()
 export class AlertsService {
@@ -13,6 +13,17 @@ export class AlertsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {}
+
+  @OnEvent('temperature.anomaly.created')
+  async handleTemperatureAnomaly(event: Record<string, any>) {
+    try {
+      await this.processTemperatureAlert(event as TemperatureAnomalyEvent);
+    } catch (err: any) {
+      this.logger.error(
+        `[ALERT ERROR] Failed processing temperature.anomaly.created for segment ${event.segmentId}: ${err?.message}`,
+      );
+    }
+  }
 
   @OnEvent('incident.created')
   async handleIncidentCreated(event: Record<string, any>) {
@@ -39,6 +50,78 @@ export class AlertsService {
     } catch (err: any) {
       this.logger.error(`[ALERT ERROR] Failed processing incident.resolved for ${event.incidentId}: ${err?.message}`);
     }
+  }
+
+  private async processTemperatureAlert(event: TemperatureAnomalyEvent) {
+    const recipients: string[] = this.configService.get<string[]>('alerting.recipients') || [];
+
+    const segment = await this.prisma.segment.findUnique({
+      where: { id: event.segmentId },
+      include: { pipeline: true },
+    });
+
+    const pipelineName = segment?.pipeline?.name || event.pipelineId;
+    const detectedTime = new Date(event.detectedAt).toLocaleString();
+
+    const subject = `[HEAT HAZARD] High Temperature Anomaly Detected on ${pipelineName}`;
+    const bodyText =
+      `HEAT HAZARD ALERT: A sustained high-temperature anomaly has been detected on the pipeline network.\n\n` +
+      `Category: TEMPERATURE_ANOMALY (Non-Leak Heat Hazard)\n` +
+      `Pipeline: ${pipelineName}\n` +
+      `Segment ID: ${event.segmentId}\n` +
+      `Sensor Serial: ${event.sensorSerialNumber} (Sensor ID: ${event.sensorId})\n` +
+      `Current Temperature: ${event.currentTemperature.toFixed(1)}°C\n` +
+      `Threshold Limit: ${event.thresholdTemperature.toFixed(1)}°C (API 521 Solar/Ambient Ceiling)\n` +
+      `Sustained Duration: ${event.sustainedTicks} consecutive readings\n` +
+      `Detected At: ${detectedTime}\n\n` +
+      `Note: This is an independent thermal hazard alert (abnormal heat source / solar overload / fire risk), NOT evidence of a pipe leak. Immediate inspection of segment surroundings is advised.`;
+
+    this.logger.warn(
+      `🔥 [HEAT HAZARD NOTIFICATION] High temperature anomaly on ${pipelineName} (Segment: ${event.segmentId}, Sensor: ${event.sensorSerialNumber}, Temp: ${event.currentTemperature.toFixed(1)}°C).`,
+    );
+
+    if (recipients.length === 0) {
+      this.logger.log(`[ALERT SKIP] No recipients configured in ALERT_RECIPIENTS for temperature anomaly`);
+      return;
+    }
+
+    // Attempt direct email notification to configured recipients
+    for (const recipient of recipients) {
+      this.sendDirectEmail(recipient, subject, bodyText).catch((err) => {
+        this.logger.error(`[TEMP ALERT DISPATCH ERROR] Failed sending to ${recipient}: ${err?.message}`);
+      });
+    }
+  }
+
+  private async sendDirectEmail(recipient: string, subject: string, bodyText: string) {
+    const resendApiKey = this.configService.get<string>('alerting.resendApiKey');
+    const fromEmail = this.configService.get<string>('alerting.emailFrom');
+
+    if (!resendApiKey) {
+      this.logger.warn(`[TEMP ALERT] RESEND_API_KEY not configured. Email not sent to ${recipient}.`);
+      return;
+    }
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [recipient],
+        subject,
+        text: bodyText,
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      throw new Error(`Resend HTTP ${response.status}: ${errBody}`);
+    }
+
+    this.logger.log(`[HEAT HAZARD ALERT SENT] Email successfully dispatched to ${recipient}`);
   }
 
   private async processAlertEvent(event: IncidentCreatedEvent, eventType: 'CREATED' | 'UPGRADED' | 'RESOLVED') {

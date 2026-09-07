@@ -21,6 +21,12 @@ export default () => ({
     flowMinSustainedTicks: process.env.DETECTION_FLOW_MIN_SUSTAINED_TICKS
       ? parseInt(process.env.DETECTION_FLOW_MIN_SUSTAINED_TICKS, 10)
       : undefined,
+    // Temperature awareness settings
+    tempFlowAdjustmentFactor: parseFloat(process.env.TEMP_FLOW_ADJUSTMENT_FACTOR || '0.002'),
+    tempDangerThresholdC: parseFloat(process.env.TEMP_DANGER_THRESHOLD_C || '65'),
+    tempMinSustainedTicks: process.env.TEMP_MIN_SUSTAINED_TICKS
+      ? parseInt(process.env.TEMP_MIN_SUSTAINED_TICKS, 10)
+      : undefined,
   },
   alerting: {
     resendApiKey: process.env.RESEND_API_KEY,
