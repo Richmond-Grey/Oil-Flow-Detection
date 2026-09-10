@@ -131,8 +131,13 @@ VAPID_SUBJECT=mailto:admin@pipeline-detection.local
 ## 6. Schema Changes Confirmation
 
 > **Explicit Confirmation:**
-> Only the **`PushSubscription`** model was added to `prisma/schema.prisma`:
+> The **`PushSubscription`** model and its opposite relation field `pushSubscriptions PushSubscription[]` on `User` were added to `prisma/schema.prisma`:
 > ```prisma
+> model User {
+>   // ... existing fields ...
+>   pushSubscriptions PushSubscription[]
+> }
+> 
 > model PushSubscription {
 >   id        String   @id @default(cuid())
 >   userId    String
@@ -143,5 +148,6 @@ VAPID_SUBJECT=mailto:admin@pipeline-detection.local
 >   createdAt DateTime @default(now())
 > }
 > ```
-> No existing models (`User`, `Pipeline`, `Segment`, `Sensor`, `SensorReading`, `LeakIncident`, `AlertLog`), enums, or fields in `schema.prisma` were modified.
+> No other models (`Pipeline`, `Segment`, `Sensor`, `SensorReading`, `LeakIncident`, `AlertLog`), enums, or fields in `schema.prisma` were modified.
+
 

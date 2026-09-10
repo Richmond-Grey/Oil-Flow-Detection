@@ -52,3 +52,8 @@ export type LeakIncident = Prisma.LeakIncidentModel
  * 
  */
 export type AlertLog = Prisma.AlertLogModel
+/**
+ * Model PushSubscription
+ * 
+ */
+export type PushSubscription = Prisma.PushSubscriptionModel
