@@ -22,7 +22,9 @@ export const envSchema = z.object({
   TEMP_MIN_SUSTAINED_TICKS: z.coerce.number().optional(),
   RESEND_API_KEY: z.string().optional(),
   ALERT_EMAIL_FROM: z.string().optional(),
-  ALERT_RECIPIENTS: z.string().optional(),
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

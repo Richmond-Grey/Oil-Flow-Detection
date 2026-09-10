@@ -31,8 +31,10 @@ export default () => ({
   alerting: {
     resendApiKey: process.env.RESEND_API_KEY,
     emailFrom: process.env.ALERT_EMAIL_FROM || 'alerts@pipeline-detection.local',
-    recipients: process.env.ALERT_RECIPIENTS
-      ? process.env.ALERT_RECIPIENTS.split(',').map((e) => e.trim()).filter(Boolean)
-      : [],
+  },
+  push: {
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY,
+    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
+    vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@pipeline-detection.local',
   },
 });
