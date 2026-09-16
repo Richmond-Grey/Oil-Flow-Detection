@@ -36,4 +36,24 @@ export class PushController {
   async unsubscribe(@CurrentUser() user: any) {
     return this.alertsService.unsubscribePush(user.id);
   }
+
+  @Public()
+  @Post('test')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send test web push notification to subscribed browsers (POST)' })
+  @ApiResponse({ status: 200, description: 'Test push notification dispatched' })
+  async sendTestPushPost() {
+    await this.alertsService.sendTestPushNotification();
+    return { success: true, message: 'Test push notification dispatched.' };
+  }
+
+  @Public()
+  @Get('test')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send test web push notification to subscribed browsers (GET)' })
+  @ApiResponse({ status: 200, description: 'Test push notification dispatched' })
+  async sendTestPushGet() {
+    await this.alertsService.sendTestPushNotification();
+    return { success: true, message: 'Test push notification dispatched.' };
+  }
 }

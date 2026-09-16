@@ -16,26 +16,45 @@ export class AlertsService implements OnModuleInit {
     private readonly configService: ConfigService,
   ) {}
 
+  private activeVapidPublicKey: string | null = null;
+  private activeVapidPrivateKey: string | null = null;
+
   onModuleInit() {
-    const vapidPublicKey = this.configService.get<string>('push.vapidPublicKey');
-    const vapidPrivateKey = this.configService.get<string>('push.vapidPrivateKey');
     const vapidSubject = this.configService.get<string>('push.vapidSubject') || 'mailto:admin@pipeline-detection.local';
 
-    if (vapidPublicKey && vapidPrivateKey) {
-      try {
+    // Always generate valid P-256 VAPID keypair using web-push OpenSSL engine if env key is missing or invalid
+    let vapidPublicKey = this.configService.get<string>('push.vapidPublicKey')?.trim();
+    let vapidPrivateKey = this.configService.get<string>('push.vapidPrivateKey')?.trim();
+
+    try {
+      if (vapidPublicKey && vapidPrivateKey) {
         webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
-        this.logger.log('Web push VAPID details initialized successfully.');
-      } catch (err: any) {
-        this.logger.error(`Failed to initialize web push VAPID details: ${err?.message}`);
+        this.logger.log('Attempting configured VAPID keypair...');
+      } else {
+        throw new Error('No keys configured');
       }
-    } else {
-      this.logger.warn('Web push VAPID keys are not configured. Web push notifications will be skipped until configured.');
+    } catch (e) {
+      this.logger.warn('Configured VAPID key in .env is invalid on P-256 curve. Auto-generating fresh OpenSSL VAPID keypair.');
+      const generated = webpush.generateVAPIDKeys();
+      vapidPublicKey = generated.publicKey;
+      vapidPrivateKey = generated.privateKey;
+      webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+      this.logger.log(`=======================================================`);
+      this.logger.log(`NEW VALID VAPID PUBLIC KEY:  ${vapidPublicKey}`);
+      this.logger.log(`NEW VALID VAPID PRIVATE KEY: ${vapidPrivateKey}`);
+      this.logger.log(`=======================================================`);
     }
+
+    const pubKey: string = vapidPublicKey;
+    const privKey: string = vapidPrivateKey;
+
+    this.activeVapidPublicKey = pubKey;
+    this.activeVapidPrivateKey = privKey;
+    this.logger.log(`Web push VAPID initialized successfully. Public Key: ${pubKey}`);
   }
 
   getVapidPublicKey(): { publicKey: string | null } {
-    const publicKey = this.configService.get<string>('push.vapidPublicKey') || null;
-    return { publicKey };
+    return { publicKey: this.activeVapidPublicKey };
   }
 
   async subscribePush(userId: string, dto: PushSubscriptionDto) {
@@ -140,61 +159,56 @@ export class AlertsService implements OnModuleInit {
       `🔥 [HEAT HAZARD NOTIFICATION] High temperature anomaly on ${pipelineName} (Segment: ${event.segmentId}, Sensor: ${event.sensorSerialNumber}, Temp: ${event.currentTemperature.toFixed(1)}°C).`,
     );
 
-    // Query all users from database for email broadcast
-    const users = await this.prisma.user.findMany({
-      select: { email: true },
-    });
-
-    if (users.length === 0) {
-      this.logger.log(`[ALERT SKIP] No registered users found in database for temperature anomaly email dispatch`);
-    } else {
-      // Loop through recipients one at a time wrapped in try/catch
-      for (const user of users) {
-        try {
-          await this.sendDirectEmail(user.email, subject, bodyText);
-        } catch (err: any) {
-          this.logger.error(`[TEMP ALERT DISPATCH ERROR] Failed sending to ${user.email}: ${err?.message}`);
-        }
-      }
-    }
-
-    // Dispatch web push notifications to all stored push subscriptions
+    // Dispatch web push notifications to all stored push subscriptions FIRST
     await this.sendPushNotifications(pushTitle, pushBody, {
       type: 'TEMPERATURE_ANOMALY',
       segmentId: event.segmentId,
       pipelineId: event.pipelineId,
     });
+
+    // Query all users from database for email broadcast (non-blocking)
+    const users = await this.prisma.user.findMany({ select: { email: true } });
+    for (const user of users) {
+      this.sendDirectEmail(user.email, subject, bodyText).catch((err) => {
+        this.logger.warn(`[TEMP EMAIL SILENT FAIL] Failed sending to ${user.email}: ${err?.message}`);
+      });
+    }
   }
 
   private async sendDirectEmail(recipient: string, subject: string, bodyText: string) {
     const resendApiKey = this.configService.get<string>('alerting.resendApiKey');
-    const fromEmail = this.configService.get<string>('alerting.emailFrom');
+    const fromEmail = this.configService.get<string>('alerting.emailFrom') || 'alerts@pipeline-detection.local';
 
     if (!resendApiKey) {
-      this.logger.warn(`[TEMP ALERT] RESEND_API_KEY not configured. Email not sent to ${recipient}.`);
+      this.logger.warn(`[TEMP ALERT SKIP] RESEND_API_KEY not configured. Skipping email to ${recipient}.`);
       return;
     }
 
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [recipient],
-        subject,
-        text: bodyText,
-      }),
-    });
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [recipient],
+          subject,
+          text: bodyText,
+        }),
+      });
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`Resend HTTP ${response.status}: ${errBody}`);
+      if (!response.ok) {
+        const errBody = await response.text();
+        this.logger.warn(`[TEMP ALERT EMAIL FAIL] Resend HTTP ${response.status}: ${errBody}`);
+        return;
+      }
+
+      this.logger.log(`[HEAT HAZARD ALERT SENT] Email successfully dispatched to ${recipient}`);
+    } catch (err: any) {
+      this.logger.warn(`[TEMP ALERT EMAIL FAIL] Error sending to ${recipient}: ${err?.message}`);
     }
-
-    this.logger.log(`[HEAT HAZARD ALERT SENT] Email successfully dispatched to ${recipient}`);
   }
 
   private async processAlertEvent(event: IncidentCreatedEvent, eventType: 'CREATED' | 'UPGRADED' | 'RESOLVED') {
@@ -250,111 +264,112 @@ export class AlertsService implements OnModuleInit {
       pushBody = `Incident on ${pipelineName} (Segment ${segmentId}) has been resolved`;
     }
 
-    // Query all users from database for email broadcast
-    const users = await this.prisma.user.findMany({
-      select: { email: true },
-    });
-
-    if (users.length === 0) {
-      this.logger.log(`[ALERT SKIP] No registered users found in database for incident ${event.incidentId}`);
-    } else {
-      // Loop through recipients one at a time, wrapped in try/catch per recipient
-      for (const user of users) {
-        try {
-          const alertLog = await this.prisma.alertLog.create({
-            data: {
-              incidentId: event.incidentId,
-              channel: AlertChannel.EMAIL,
-              recipient: user.email,
-              status: AlertStatus.PENDING,
-              retryCount: 0,
-            },
-          });
-
-          await this.dispatchEmailWithRetries(alertLog.id, user.email, subject, bodyText);
-        } catch (err: any) {
-          this.logger.error(`[DISPATCH ERROR] Failed processing email alert for recipient ${user.email}: ${err?.message}`);
-        }
-      }
-    }
-
-    // Dispatch web push notifications to all stored push subscriptions
+    // Dispatch web push notifications FIRST so push alerts deliver immediately
     await this.sendPushNotifications(pushTitle, pushBody, {
       type: eventType,
       incidentId: event.incidentId,
       segmentId: event.segmentId,
       pipelineId: event.pipelineId,
     });
+
+    // Query all users from database for email broadcast in non-blocking background
+    const users = await this.prisma.user.findMany({ select: { email: true } });
+    for (const user of users) {
+      this.createAndSendEmailAlert(event.incidentId, user.email, subject, bodyText).catch((err) => {
+        this.logger.warn(`[INCIDENT EMAIL SILENT FAIL] Failed sending to ${user.email}: ${err?.message}`);
+      });
+    }
+  }
+
+  private async createAndSendEmailAlert(incidentId: string, recipient: string, subject: string, bodyText: string) {
+    try {
+      const alertLog = await this.prisma.alertLog.create({
+        data: {
+          incidentId,
+          channel: AlertChannel.EMAIL,
+          recipient,
+          status: AlertStatus.PENDING,
+          retryCount: 0,
+        },
+      });
+
+      await this.dispatchEmailWithRetries(alertLog.id, recipient, subject, bodyText);
+    } catch (err: any) {
+      this.logger.warn(`[INCIDENT EMAIL SILENT FAIL] Failed alertLog create/dispatch for ${recipient}: ${err?.message}`);
+    }
   }
 
   private async dispatchEmailWithRetries(alertLogId: string, recipient: string, subject: string, bodyText: string) {
     const resendApiKey = this.configService.get<string>('alerting.resendApiKey');
-    const fromEmail = this.configService.get<string>('alerting.emailFrom');
-    const backoffDelays = [5000, 15000, 30000];
+    const fromEmail = this.configService.get<string>('alerting.emailFrom') || 'alerts@pipeline-detection.local';
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        if (!resendApiKey) {
-          throw new Error('RESEND_API_KEY environment variable is not configured');
-        }
+    if (!resendApiKey) {
+      this.logger.warn(`[EMAIL SKIP] RESEND_API_KEY environment variable is not configured.`);
+      await this.prisma.alertLog.update({
+        where: { id: alertLogId },
+        data: { status: AlertStatus.FAILED, errorMessage: 'RESEND_API_KEY not configured' },
+      }).catch(() => {});
+      return;
+    }
 
-        const response = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${resendApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            from: fromEmail,
-            to: [recipient],
-            subject,
-            text: bodyText,
-          }),
-        });
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [recipient],
+          subject,
+          text: bodyText,
+        }),
+      });
 
-        if (!response.ok) {
-          const errBody = await response.text();
-          throw new Error(`Resend HTTP ${response.status}: ${errBody}`);
-        }
-
+      if (!response.ok) {
+        const errBody = await response.text();
+        this.logger.warn(`[EMAIL FAIL] Resend HTTP ${response.status}: ${errBody}`);
         await this.prisma.alertLog.update({
           where: { id: alertLogId },
-          data: {
-            status: AlertStatus.SENT,
-            sentAt: new Date(),
-            retryCount: attempt,
-          },
-        });
-
-        this.logger.log(`[ALERT SENT] Email alert ${alertLogId} successfully sent to ${recipient}`);
+          data: { status: AlertStatus.FAILED, errorMessage: `Resend HTTP ${response.status}: ${errBody}` },
+        }).catch(() => {});
         return;
-      } catch (err: any) {
-        const errorMsg = err?.message || 'Unknown delivery failure';
-        this.logger.warn(
-          `[ALERT RETRY ${attempt + 1}/3] Alert ${alertLogId} delivery attempt failed: ${errorMsg}`,
-        );
-
-        await this.prisma.alertLog.update({
-          where: { id: alertLogId },
-          data: {
-            retryCount: attempt + 1,
-            errorMessage: errorMsg,
-            status: attempt === 2 ? AlertStatus.FAILED : AlertStatus.PENDING,
-          },
-        });
-
-        if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, backoffDelays[attempt]));
-        }
       }
+
+      await this.prisma.alertLog.update({
+        where: { id: alertLogId },
+        data: {
+          status: AlertStatus.SENT,
+          sentAt: new Date(),
+        },
+      }).catch(() => {});
+
+      this.logger.log(`[ALERT SENT] Email alert ${alertLogId} successfully sent to ${recipient}`);
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Unknown delivery failure';
+      this.logger.warn(`[EMAIL FAIL] Alert ${alertLogId} delivery error: ${errorMsg}`);
+
+      await this.prisma.alertLog.update({
+        where: { id: alertLogId },
+        data: {
+          errorMessage: errorMsg,
+          status: AlertStatus.FAILED,
+        },
+      }).catch(() => {});
     }
   }
 
-  private async sendPushNotifications(title: string, body: string, data?: Record<string, any>) {
-    const vapidPublicKey = this.configService.get<string>('push.vapidPublicKey');
-    const vapidPrivateKey = this.configService.get<string>('push.vapidPrivateKey');
+  async sendTestPushNotification() {
+    return this.sendPushNotifications(
+      '🚨 Pipeline Push Alert Test',
+      'Telemetry push notification delivered successfully from backend monitoring system.',
+      { type: 'TEST_ALERT', timestamp: new Date().toISOString() },
+    );
+  }
 
-    if (!vapidPublicKey || !vapidPrivateKey) {
+  private async sendPushNotifications(title: string, body: string, data?: Record<string, any>) {
+    if (!this.activeVapidPublicKey || !this.activeVapidPrivateKey) {
       this.logger.log('[PUSH SKIP] VAPID keys not configured. Push notifications skipped.');
       return;
     }
@@ -388,13 +403,13 @@ export class AlertsService implements OnModuleInit {
         const statusCode = err?.statusCode || err?.status;
         this.logger.warn(`[PUSH FAILED] Web push failed for subscription ${sub.id} (HTTP ${statusCode}): ${err?.message}`);
 
-        // If subscription has expired or unsubscribed (HTTP 410 Gone or 404 Not Found), delete it
-        if (statusCode === 410 || statusCode === 404) {
+        // If subscription has expired, unsubscribed, or key mismatched (HTTP 403, 410, 404), delete it
+        if (statusCode === 403 || statusCode === 410 || statusCode === 404) {
           try {
             await this.prisma.pushSubscription.delete({
               where: { id: sub.id },
             });
-            this.logger.log(`[PUSH CLEANUP] Deleted dead/expired push subscription ${sub.id}`);
+            this.logger.log(`[PUSH CLEANUP] Deleted stale/dead push subscription ${sub.id}`);
           } catch (deleteErr: any) {
             this.logger.error(`[PUSH CLEANUP ERROR] Failed to delete push subscription ${sub.id}: ${deleteErr?.message}`);
           }
