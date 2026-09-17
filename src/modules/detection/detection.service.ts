@@ -349,7 +349,27 @@ export class DetectionService implements OnModuleInit {
 
     // --- CASE 1: ANOMALY DETECTED ---
     if (bothSignalsAgree || lowerConfidenceSignal) {
-      const confidence = bothSignalsAgree ? 0.95 : 0.65;
+      let confidence = 0.95;
+      let warningCalc: { confidence: number; thresholdExcessRatio: number; durationExcessRatio: number; combinedRatio: number } | null = null;
+
+      if (!bothSignalsAgree) {
+        if (lowerConfidencePressure) {
+          warningCalc = this.calculateWarningConfidence(
+            pressureDropPct,
+            pressureDropThresholdPct,
+            sustainedPressureTicks,
+            minSustainedTicks + 2,
+          );
+        } else {
+          warningCalc = this.calculateWarningConfidence(
+            flowMismatchPct,
+            flowMismatchTolerancePct,
+            sustainedFlowTicks,
+            flowMinSustainedTicks,
+          );
+        }
+        confidence = warningCalc.confidence;
+      }
       const targetSegmentStatus = bothSignalsAgree ? SegmentStatus.LEAK : SegmentStatus.WARNING;
 
       if (existingOpenIncident) {
@@ -383,6 +403,8 @@ export class DetectionService implements OnModuleInit {
             existingOpenIncident,
             thresholdDecision,
             mlResponse,
+            0.95,
+            null,
           );
 
           this.logger.warn(
@@ -422,11 +444,26 @@ export class DetectionService implements OnModuleInit {
             existingOpenIncident,
             thresholdDecision,
             mlResponse,
+            confidence,
+            warningCalc,
           );
           this.logger.log(
             `[DUPLICATE SKIPPED - HIGH CONFIDENCE] Segment ${segment.id} already has a high-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). No action taken.`,
           );
           return mlResponse !== null;
+        }
+
+        // Same tier (WARNING -> WARNING): update stored confidence if it changed dynamically
+        let finalConfidence = existingConfidence;
+        if (Math.abs(existingConfidence - confidence) >= 0.005) {
+          const updatedIncident = await this.prisma.leakIncident.update({
+            where: { id: existingOpenIncident.id },
+            data: { confidence },
+          });
+          finalConfidence = updatedIncident.confidence;
+          this.logger.log(
+            `🔄 [INCIDENT CONFIDENCE UPDATED] Segment ${segment.id} open incident ${existingOpenIncident.id} updated confidence: ${existingConfidence.toFixed(2)} → ${confidence.toFixed(2)}`,
+          );
         }
 
         thresholdDecision = 'duplicate';
@@ -446,9 +483,11 @@ export class DetectionService implements OnModuleInit {
           existingOpenIncident,
           thresholdDecision,
           mlResponse,
+          finalConfidence,
+          warningCalc,
         );
         this.logger.log(
-          `[DUPLICATE SKIPPED - SAME TIER] Segment ${segment.id} already has a low-confidence OPEN incident (${existingOpenIncident.id}, confidence=${existingConfidence.toFixed(2)}). Signals unchanged. No action taken.`,
+          `[DUPLICATE SKIPPED - SAME TIER] Segment ${segment.id} already has a low-confidence OPEN incident (${existingOpenIncident.id}, confidence=${finalConfidence.toFixed(2)}).`,
         );
         return mlResponse !== null;
       }
@@ -485,10 +524,27 @@ export class DetectionService implements OnModuleInit {
         existingOpenIncident,
         thresholdDecision,
         mlResponse,
+        confidence,
+        warningCalc,
       );
 
+      if (warningCalc) {
+        const signalName = lowerConfidencePressure ? 'PRESSURE-ONLY' : 'FLOW-ONLY';
+        const actualValue = lowerConfidencePressure ? pressureDropPct : flowMismatchPct;
+        const threshValue = lowerConfidencePressure ? pressureDropThresholdPct : flowMismatchTolerancePct;
+        const actualTicks = lowerConfidencePressure ? sustainedPressureTicks : sustainedFlowTicks;
+        const reqTicks = lowerConfidencePressure ? minSustainedTicks + 2 : flowMinSustainedTicks;
+
+        this.logger.warn(
+          `📊 [WARNING CONFIDENCE CALCULATION] Signal: ${signalName} | ` +
+            `Threshold Excess Ratio: ${warningCalc.thresholdExcessRatio.toFixed(2)} (Actual: ${actualValue.toFixed(1)}%, Thresh: ${threshValue}%) | ` +
+            `Duration Excess Ratio: ${warningCalc.durationExcessRatio.toFixed(2)} (Actual: ${actualTicks} ticks, Req: ${reqTicks} ticks) | ` +
+            `Combined Ratio: ${warningCalc.combinedRatio.toFixed(2)} -> Scaled Confidence: ${confidence.toFixed(2)}`,
+        );
+      }
+
       this.logger.warn(
-        `🚨 [INCIDENT RAISED] Created Incident ${incident.id} for Segment ${segment.id} | Confidence: ${confidence} | Status set to: ${targetSegmentStatus} | Both Signals: ${bothSignalsAgree}`,
+        `🚨 [INCIDENT RAISED] Created Incident ${incident.id} for Segment ${segment.id} | Confidence: ${confidence.toFixed(2)} | Status set to: ${targetSegmentStatus} | Both Signals: ${bothSignalsAgree}`,
       );
 
       const payload: IncidentCreatedEvent = {
@@ -587,6 +643,35 @@ export class DetectionService implements OnModuleInit {
     return mlResponse !== null;
   }
 
+  /**
+   * Calculates a dynamic confidence score for single-signal WARNING outcomes (0.55 – 0.90).
+   *
+   * Formula:
+   * 1. Threshold Excess Ratio (R_threshold): (actualValue - thresholdValue) / thresholdValue, capped at 1.0.
+   * 2. Duration Excess Ratio (R_duration): (actualTicks - requiredTicks) / requiredTicks, capped at 1.0.
+   * 3. Combined Ratio: average of R_threshold and R_duration.
+   * 4. Scaled Confidence: 0.55 + combinedRatio * (0.90 - 0.55), rounded to 2 decimal places.
+   */
+  private calculateWarningConfidence(
+    actualValue: number,
+    thresholdValue: number,
+    actualTicks: number,
+    requiredTicks: number,
+  ): { confidence: number; thresholdExcessRatio: number; durationExcessRatio: number; combinedRatio: number } {
+    const thresholdExcessRatio = Math.min(1.0, Math.max(0, (actualValue - thresholdValue) / (thresholdValue || 1)));
+    const durationExcessRatio = Math.min(1.0, Math.max(0, (actualTicks - requiredTicks) / (requiredTicks || 1)));
+    const combinedRatio = (thresholdExcessRatio + durationExcessRatio) / 2;
+    const rawConfidence = 0.55 + combinedRatio * (0.90 - 0.55);
+    const confidence = Math.round(rawConfidence * 100) / 100;
+
+    return {
+      confidence,
+      thresholdExcessRatio,
+      durationExcessRatio,
+      combinedRatio,
+    };
+  }
+
   private async evaluateHighTemperatureHazard(
     segment: any,
     startReadings: any[],
@@ -672,10 +757,21 @@ export class DetectionService implements OnModuleInit {
     existingOpenIncident: any,
     thresholdDecision: string,
     mlResponse: { leak_probability: number; prediction: string } | null,
+    confidence?: number,
+    warningCalc?: { thresholdExcessRatio: number; durationExcessRatio: number; combinedRatio: number } | null,
   ) {
     const mlLogStr = mlResponse
       ? `[ML: pred=${mlResponse.prediction}, prob=${mlResponse.leak_probability}]`
       : `[ML: UNREACHABLE / ERROR]`;
+
+    let confLogStr = '';
+    if (confidence !== undefined) {
+      if (warningCalc) {
+        confLogStr = ` | [CONFIDENCE: ${confidence.toFixed(2)} (Dynamic WARNING: ThreshRatio=${warningCalc.thresholdExcessRatio.toFixed(2)}, DurRatio=${warningCalc.durationExcessRatio.toFixed(2)})]`;
+      } else {
+        confLogStr = ` | [CONFIDENCE: ${confidence.toFixed(2)}]`;
+      }
+    }
 
     this.logger.log(
       `[EVAL] Segment ${segment.id} | Start: ${segment.startSensor.serialNumber} (P: ${recentPressure} PSI, Drop: ${pressureDropPct.toFixed(
@@ -688,7 +784,7 @@ export class DetectionService implements OnModuleInit {
         1,
       )}%, Ticks: ${sustainedFlowTicks}/${flowMinSustainedTicks}) | Open Incident: ${
         existingOpenIncident ? `YES` : 'NO'
-      } | Threshold Decision: ${thresholdDecision} | ${mlLogStr}`,
+      } | Threshold Decision: ${thresholdDecision}${confLogStr} | ${mlLogStr}`,
     );
   }
 }

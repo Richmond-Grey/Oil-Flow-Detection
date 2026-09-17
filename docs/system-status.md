@@ -224,9 +224,9 @@ The engine runs per-segment and produces exactly one of the following outcomes e
 | # | Outcome | Condition | Segment Status | Incident Confidence | What Happens |
 | :-- | :--- | :--- | :--- | :--- | :--- |
 | 1 | **High-Confidence Leak** | Both pressure (≥15% drop, ≥3 ticks) AND flow (≥10% mismatch, ≥3 ticks) agree | → `LEAK` | 0.95 | New `LeakIncident` created. `incident.created` emitted. |
-| 2 | **Low-Confidence Warning (Pressure-only)** | Pressure drop only, sustained ≥ `minTicks + 2` (default: 5 ticks) | → `WARNING` | 0.65 | New `LeakIncident` created. `incident.created` emitted. |
-| 3 | **Low-Confidence Warning (Flow-only)** | Flow mismatch only, sustained ≥ `flowMinSustainedTicks` (default: 3 ticks) | → `WARNING` | 0.65 | New `LeakIncident` created. `incident.created` emitted. |
-| 4 | **Incident Upgraded** | Existing OPEN incident at 0.65 (WARNING), and now both signals agree | WARNING → `LEAK` | 0.65 → **0.95** | Existing incident `confidence` updated to 0.95. No new record. `incident.upgraded` emitted. |
+| 2 | **Low-Confidence Warning (Pressure-only)** | Pressure drop only, sustained ≥ `minTicks + 2` (default: 5 ticks) | → `WARNING` | Dynamic 0.55 – 0.90 | New `LeakIncident` created. `incident.created` emitted. |
+| 3 | **Low-Confidence Warning (Flow-only)** | Flow mismatch only, sustained ≥ `flowMinSustainedTicks` (default: 3 ticks) | → `WARNING` | Dynamic 0.55 – 0.90 | New `LeakIncident` created. `incident.created` emitted. |
+| 4 | **Incident Upgraded** | Existing OPEN incident is WARNING (0.55–0.90), and now both signals agree | WARNING → `LEAK` | 0.55–0.90 → **0.95** | Existing incident `confidence` updated to 0.95. No new record. `incident.upgraded` emitted. |
 | 5 | **Duplicate Skipped** | Anomaly detected, but open incident already matches or exceeds current confidence level | Unchanged | Unchanged | No DB writes. Logged with reason (HIGH CONFIDENCE or SAME TIER). |
 | 6 | **Auto-Resolved** | Open incident exists, but both readings have dropped below 50% of thresholds | → `NORMAL` | N/A | Incident set to `RESOLVED` with timestamp. Segment reset to `NORMAL`. |
 

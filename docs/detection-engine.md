@@ -58,11 +58,27 @@ When evaluating a segment, the engine decides between **6 mutually exclusive lea
 | Outcome | Signal Conditions | Segment Status | Confidence | Action Taken |
 | :--- | :--- | :--- | :--- | :--- |
 | **High-Confidence Leak** | Both Pressure Drop ($\ge 15\%$) **AND** Temp-Adjusted Flow Mismatch ($\ge 10\%$) agree for $\ge 3$ ticks | `LEAK` | **0.95 (95%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
-| **Low-Confidence Warning (Pressure-only)** | Pressure drop alone persists for $\ge$ `minSustainedTicks + 2` ticks (default: 5); flow rate is not confirming | `WARNING` | **0.65 (65%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
-| **Low-Confidence Warning (Flow-only)** | Temp-adjusted flow rate mismatch alone persists for $\ge$ `flowMinSustainedTicks` ticks (default: 3); pressure signal is not active | `WARNING` | **0.65 (65%)** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
-| **Incident Upgraded** | Existing `OPEN` incident is low-confidence (~0.65, a `WARNING`), and now **both** signals agree | `LEAK` | Upgraded to **0.95** | Updates **the existing** incident's `confidence` field to `0.95`; updates segment status to `LEAK`. No second incident is created. Emits `incident.upgraded`. Logged as `[INCIDENT UPGRADED]`. |
+| **Low-Confidence Warning (Pressure-only)** | Pressure drop alone persists for $\ge$ `minSustainedTicks + 2` ticks (default: 5); flow rate is not confirming | `WARNING` | **Dynamic 0.55 – 0.90** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
+| **Low-Confidence Warning (Flow-only)** | Temp-adjusted flow rate mismatch alone persists for $\ge$ `flowMinSustainedTicks` ticks (default: 3); pressure signal is not active | `WARNING` | **Dynamic 0.55 – 0.90** | Creates a new `LeakIncident` (`status: OPEN`). Emits `incident.created`. Logged as `[INCIDENT RAISED]`. |
+| **Incident Upgraded** | Existing `OPEN` incident is low-confidence (WARNING outcome, 0.55–0.90), and now **both** signals agree | `LEAK` | Upgraded to **0.95** | Updates **the existing** incident's `confidence` field to `0.95`; updates segment status to `LEAK`. No second incident is created. Emits `incident.upgraded`. Logged as `[INCIDENT UPGRADED]`. |
 | **Duplicate Skipped** | Anomaly detected, but segment already has an `OPEN` incident at the same or higher confidence tier | Unchanged | Unchanged | No DB writes. Logged as `[DUPLICATE SKIPPED - HIGH CONFIDENCE]` if existing confidence ≥ 0.9, or `[DUPLICATE SKIPPED - SAME TIER]` if existing is low-confidence and signals have not escalated to both-agree. |
 | **Auto-Resolved** | An `OPEN` incident exists, but both pressure drop and temp-adjusted flow mismatch have fallen below 50% of their threshold values | `NORMAL` | N/A | Sets incident `status: RESOLVED` with `resolvedAt` timestamp. Sets segment status to `NORMAL`. Logged as `[INCIDENT RESOLVED]`. |
+
+### Dynamic WARNING Confidence Calculation
+
+Single-signal WARNING outcomes (pressure-only or flow-only) calculate a dynamic confidence score scaling smoothly between **0.55** and **0.90** based on two factors:
+
+1. **Threshold Excess Ratio ($R_{\text{threshold}}$):** How far past the threshold the signal is.
+   $$\text{Threshold Excess Ratio} = \min\left(1.0, \max\left(0, \frac{\text{Actual Signal} - \text{Threshold}}{\text{Threshold}}\right)\right)$$
+2. **Duration Excess Ratio ($R_{\text{duration}}$):** How long the signal has been sustained past minimum required ticks.
+   $$\text{Duration Excess Ratio} = \min\left(1.0, \max\left(0, \frac{\text{Actual Ticks} - \text{Required Ticks}}{\text{Required Ticks}}\right)\right)$$
+3. **Combined Ratio & Scaled Confidence:**
+   $$\text{Combined Ratio} = \frac{\text{Threshold Excess Ratio} + \text{Duration Excess Ratio}}{2}$$
+   $$\text{Confidence} = 0.55 + \text{Combined Ratio} \times (0.90 - 0.55)$$
+
+- **Min Score (0.55):** Signal just barely qualifies (right at threshold, right at required ticks).
+- **Max Score (0.90):** Signal significantly exceeds threshold ($\ge 2\times$ threshold) and is sustained much longer ($\ge 2\times$ required ticks).
+- **Upper Cap:** Never reaches **0.95**, which remains reserved exclusively for the two-signal agreement case.
 
 ---
 
