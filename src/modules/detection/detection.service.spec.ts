@@ -74,7 +74,7 @@ describe('DetectionService - WARNING Confidence Database Verification', () => {
     prismaService.sensorReading.findMany.mockResolvedValue(mockReadings);
     prismaService.segment.findMany.mockResolvedValue([fakeSegment]);
 
-    await service.runDetectionCycle();
+    await service.evaluateSegments();
 
     expect(prismaService.leakIncident.create).toHaveBeenCalled();
     const createCall = prismaService.leakIncident.create.mock.calls[0][0];
