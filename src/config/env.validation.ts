@@ -9,6 +9,8 @@ export const envSchema = z.object({
   JWT_ACCESS_EXPIRY: z.string().default('15m'),
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('*'),
+  // Lets any user grant themselves ADMIN (at signup or via POST /auth/become-admin). Set to 'false' to disable.
+  ALLOW_SELF_ADMIN: z.enum(['true', 'false']).default('true'),
   ML_SERVICE_URL: z.string().default('http://localhost:8000'),
   DETECTION_INTERVAL_MS: z.coerce.number().default(10000),
   DETECTION_SAMPLE_SIZE: z.coerce.number().default(5),
