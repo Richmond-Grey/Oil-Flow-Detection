@@ -42,6 +42,17 @@ export class AuthController {
     return this.authService.refreshTokens(dto);
   }
 
+  @Post('become-admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Promote the current user to ADMIN (when ALLOW_SELF_ADMIN is enabled)' })
+  @ApiResponse({ status: 200, description: 'User promoted; returns updated user and fresh tokens' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Self-service admin promotion is disabled' })
+  async becomeAdmin(@CurrentUser('id') userId: string) {
+    return this.authService.becomeAdmin(userId);
+  }
+
   @Get('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current authenticated user profile' })

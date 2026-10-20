@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -32,7 +33,12 @@ export class AuthService {
 
     let roleToAssign: UserRole = UserRole.OPERATOR;
     if (dto.role) {
-      if (dto.role !== UserRole.OPERATOR && (!currentUser || currentUser.role !== UserRole.ADMIN)) {
+      const isSelfAdmin = dto.role === UserRole.ADMIN && this.isSelfAdminAllowed();
+      if (
+        dto.role !== UserRole.OPERATOR &&
+        !isSelfAdmin &&
+        (!currentUser || currentUser.role !== UserRole.ADMIN)
+      ) {
         throw new BadRequestException('Only administrators can create non-operator accounts');
       }
       roleToAssign = dto.role;
@@ -80,6 +86,29 @@ export class AuthService {
       user: this.sanitizeUser(user),
       tokens,
     };
+  }
+
+  async becomeAdmin(userId: string) {
+    if (!this.isSelfAdminAllowed()) {
+      throw new ForbiddenException('Self-service admin promotion is disabled');
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: UserRole.ADMIN },
+    });
+
+    const tokens = await this.generateTokens(user.id, user.email, user.role);
+    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+
+    return {
+      user: this.sanitizeUser(user),
+      tokens,
+    };
+  }
+
+  private isSelfAdminAllowed() {
+    return this.configService.get<string>('ALLOW_SELF_ADMIN') !== 'false';
   }
 
   async refreshTokens(dto: RefreshTokenDto) {
